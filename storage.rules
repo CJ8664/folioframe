@@ -1,0 +1,10 @@
+rules_version = '2';
+// SpectraFrame: blobs are read/written only by the Cloud Run service
+// (Admin SDK bypasses rules). No direct client access, ever.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

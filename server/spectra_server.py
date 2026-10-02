@@ -4,7 +4,7 @@
 Implements PROTOCOL.md v2:
   Human (Google sign-in session):
     GET  /login, /claim, /               console pages
-    POST /api/auth/google               {id_token} -> session cookie
+    POST /api/auth/token                 {id_token} -> session cookie
     GET  /api/session, /api/devices     session info + my devices
     POST /api/devices/claim             {code} claim a device to my account
     PATCH/DELETE /api/devices/{id}      rename / unpair (revokes token)
@@ -46,7 +46,9 @@ from sources.google_photos import (GPhotosController, PickerClient, PickFlow,
                                    default_cache_dir)
 from auth import AuthManager, AuthError, SESSION_COOKIE
 from devices import DeviceRegistry, AlreadyPaired, BadClaim, RateLimiter
-from store import JsonStore
+from store import JsonStore, FirestoreStore
+from blobs import LocalBlobStore, GCSBlobStore
+from token_store import FirestoreTokenStore
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -97,18 +99,56 @@ class Server:
             print(f"wrote default {cfg_path}")
         with open(cfg_path) as f:
             self.cfg = json.load(f)
-        self.state = {"history": {}, "last_rotation": 0}
-        if os.path.exists(st_path):
-            with open(st_path) as f:
-                self.state.update(json.load(f))
-        self._state_path = st_path
+        # Cloud Run: full config via env (values can come from Secret Manager).
+        # Top-level keys in SPECTRA_CONFIG_JSON replace the file's keys.
+        env_cfg = os.environ.get("SPECTRA_CONFIG_JSON")
+        if env_cfg:
+            self.cfg.update(json.loads(env_cfg))
+
+        # ---- Firebase mode ------------------------------------------------
+        # Enabled when config has firebase.project_id. On Cloud Run this
+        # switches persistence to Firestore + Cloud Storage and auth to
+        # Firebase Auth; without it everything stays local (dev/home lab).
+        self.firebase_cfg = self.cfg.get("firebase", {})
+        self.firebase_on = bool(self.firebase_cfg.get("project_id"))
+        self.public_url = (self.firebase_cfg.get("public_url")
+                           or os.environ.get("PUBLIC_URL", "")).rstrip("/")
+
         self.lock = threading.Lock()
-        self.store = JsonStore(os.path.join(self.data_dir, "registry.json"))
+        if self.firebase_on:
+            project = self.firebase_cfg["project_id"]
+            self.store = FirestoreStore(project_id=project)
+            bucket = self.firebase_cfg.get("storage_bucket",
+                                           f"{project}.appspot.com")
+            self.blobs = GCSBlobStore(bucket)
+            token_store = FirestoreTokenStore(self.store)
+        else:
+            self.store = JsonStore(os.path.join(self.data_dir,
+                                                "registry.json"))
+            self.blobs = LocalBlobStore(self.data_dir)
+            token_store = None
+
+        # Rotation state lives in the store so it survives container
+        # restarts; one-time import from the legacy state.json file.
+        rot = self.store.get("_service", "rotation")
+        if rot is None and os.path.exists(st_path):
+            try:
+                with open(st_path) as f:
+                    rot = json.load(f)
+            except (ValueError, OSError):
+                rot = None
+        self.state = {"history": {}, "last_rotation": 0}
+        if isinstance(rot, dict):
+            self.state.update(rot)
+        self._save_state()
+
         self.auth = AuthManager(self.store, self.cfg)
         self.devices = DeviceRegistry(self.store)
         self.ratelimit = RateLimiter()
         self.source = self._make_source(self.cfg.get("source", "picsum"))
-        self.gphotos = GPhotosController(self.cfg, self.cfg.get("port", 8765))
+        self.gphotos = GPhotosController(
+            self.cfg, self.cfg.get("port", 8765), token_store=token_store,
+            blob_store=self.blobs, public_url=self.public_url or None)
         self.frame = None
         self.etag = None
         self.preview = None
@@ -120,18 +160,14 @@ class Server:
         cls = SOURCES.get(name)
         if not cls:
             raise ValueError(f"unknown source {name}")
-        return cls(self.cfg.get(name, {}))
+        cfg = dict(self.cfg.get(name, {}))
+        if name == "google_photos":
+            # Blob-backed cache survives container restarts on Cloud Run.
+            cfg["blob_store"] = self.blobs
+        return cls(cfg)
 
     def _save_state(self):
-        tmp = self._state_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.state, f)
-        os.replace(tmp, self._state_path)
-
-    def _device_dir(self, device_id):
-        d = os.path.join(self.data_dir, "devices", device_id)
-        os.makedirs(d, exist_ok=True)
-        return d
+        self.store.put("_service", "rotation", self.state)
 
     def switch_source(self, name):
         with self.lock:
@@ -154,7 +190,8 @@ class Server:
 
         def run():
             try:
-                n = PickFlow(client, default_cache_dir()).run(session["id"])
+                n = PickFlow(client, default_cache_dir(),
+                             blob_store=self.blobs).run(session["id"])
                 gp.pick_state.update(status="done", count=n)
             except Exception as e:
                 gp.pick_state.update(status="error", error=str(e))
@@ -201,22 +238,28 @@ class Server:
             self.rotate()
 
     def device_frame(self, dev):
-        """(frame_bytes, etag): pinned override wins, else global rotation."""
+        """(frame_bytes, etag): pinned override wins, else global rotation.
+
+        tick() first: on Cloud Run instances scale to zero, so rotation must
+        also happen lazily on device wake, not only on the background thread.
+        """
+        try:
+            self.tick()
+        except Exception as e:
+            print("lazy tick error:", e)
         etag = dev.get("override_etag")
         if etag:
-            fp = os.path.join(self._device_dir(dev["device_id"]), "override.frame")
-            if os.path.exists(fp):
-                with open(fp, "rb") as f:
-                    return f.read(), etag
+            data = self.blobs.get(f"devices/{dev['device_id']}/override.frame")
+            if data:
+                return data, etag
         return self.frame, self.etag
 
     def device_preview(self, dev):
         etag = dev.get("override_etag")
         if etag:
-            pp = os.path.join(self._device_dir(dev["device_id"]), "override.png")
-            if os.path.exists(pp):
-                with open(pp, "rb") as f:
-                    return f.read()
+            data = self.blobs.get(f"devices/{dev['device_id']}/override.png")
+            if data:
+                return data
         return self.preview
 
     def set_override(self, device_id, img):
@@ -224,19 +267,15 @@ class Server:
         frame = pipeline.process_image(img, W, H,
                                        self.cfg.get("dither", "floyd"))
         etag = pipeline.frame_etag(frame)
-        d = self._device_dir(device_id)
-        with open(os.path.join(d, "override.frame"), "wb") as f:
-            f.write(frame)
-        with open(os.path.join(d, "override.png"), "wb") as f:
-            f.write(pipeline.preview_png(frame, W, H))
+        self.blobs.put(f"devices/{device_id}/override.frame", frame,
+                       "application/octet-stream")
+        self.blobs.put(f"devices/{device_id}/override.png",
+                       pipeline.preview_png(frame, W, H), "image/png")
         return etag
 
     def clear_override_files(self, device_id):
-        d = os.path.join(self.data_dir, "devices", device_id)
-        for name in ("override.frame", "override.png"):
-            p = os.path.join(d, name)
-            if os.path.exists(p):
-                os.remove(p)
+        self.blobs.delete(f"devices/{device_id}/override.frame")
+        self.blobs.delete(f"devices/{device_id}/override.png")
 
     def describe(self):
         return {
@@ -367,9 +406,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         p = urllib.parse.urlparse(self.path).path
 
+        if p == "/api/config":
+            # Public client config. The Firebase web API key is designed to
+            # be public (security comes from Auth + Firestore rules, both
+            # server-enforced); nothing secret is exposed here.
+            self._json(200, {"firebase": APP.firebase_cfg.get("web", {})})
+            return
+
         if p == "/login":
             self._send(200, "text/html", LOGIN_HTML(
-                APP.auth.client_id).encode())
+                APP.auth.provider, APP.auth.client_id,
+                APP.firebase_cfg.get("web", {})).encode())
             return
 
         if p == "/claim":
@@ -536,13 +583,13 @@ then restart the server and click Connect again.</p></body></html>"""
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
 
-        if p == "/api/auth/google":
+        if p == "/api/auth/token":
             data = self._read_json()
             if data is None:
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
             try:
-                sub, email, name = APP.auth.verify_google_token(
+                sub, email, name = APP.auth.verify_id_token(
                     data.get("id_token", ""))
             except AuthError as e:
                 self._json(401, {"ok": False, "error": str(e)})
@@ -773,7 +820,34 @@ then restart the server and click Connect again.</p></body></html>"""
 # Console HTML
 # --------------------------------------------------------------------------
 
-def LOGIN_HTML(client_id):
+def LOGIN_HTML(provider, client_id, firebase_web):
+    if provider == "firebase":
+        cfg_json = json.dumps(firebase_web)
+        return f"""<html><head><meta name='viewport'
+content='width=device-width,initial-scale=1'><title>SpectraFrame login</title>
+</head><body style='font-family:sans-serif;max-width:480px;margin:40px auto'>
+<h2>SpectraFrame</h2><p>Sign in with your Google account to manage devices.</p>
+<button onclick='signIn()' style='font-size:1.1em;padding:10px 18px'>
+Sign in with Google</button>
+<p id="err" style="color:red"></p>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script>
+firebase.initializeApp({cfg_json});
+async function signIn(){{
+  try{{
+    const cred=await firebase.auth().signInWithPopup(
+      new firebase.auth.GoogleAuthProvider());
+    const tok=await cred.user.getIdToken();
+    const r=await fetch('/api/auth/token',{{method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{id_token:tok}})}});
+    const j=await r.json();
+    if(j.ok) location.href='/';
+    else document.getElementById('err').textContent=j.error;
+  }}catch(e){{document.getElementById('err').textContent=e.message;}}
+}}
+</script></body></html>"""
     return f"""<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1'><title>SpectraFrame login</title>
 </head><body style='font-family:sans-serif;max-width:480px;margin:40px auto'>
@@ -785,7 +859,7 @@ content='width=device-width,initial-scale=1'><title>SpectraFrame login</title>
 <p id="err" style="color:red"></p>
 <script>
 function onGoogle(r){{
-  fetch('/api/auth/google',{{method:'POST',
+  fetch('/api/auth/token',{{method:'POST',
     headers:{{'Content-Type':'application/json'}},
     body:JSON.stringify({{id_token:r.credential}})}})
   .then(r=>r.json()).then(j=>{{
@@ -902,7 +976,8 @@ def main():
                 print("tick error:", e)
 
     threading.Thread(target=ticker, daemon=True).start()
-    port = APP.cfg.get("port", 8765)
+    # Cloud Run injects $PORT; local runs use config.json.
+    port = int(os.environ.get("PORT", APP.cfg.get("port", 8765)))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"SpectraFrame server v2 on :{port} "
           f"(frame {W}x{H}, etag {APP.etag})")

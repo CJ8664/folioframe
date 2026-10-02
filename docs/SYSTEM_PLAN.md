@@ -297,11 +297,16 @@ keeping it would violate the hard requirement.
   checklist re-run.
 - **Phase 3 — Per-device management.** Per-device sources/ETags, per-user
   Google Photos tokens, upload/preview/refresh in the console.
-- **Phase 4 — Hosting + hardening.** Firebase project, Cloud Run deploy via
-  OIDC (same pattern as the pregnancy app), Firestore cutover, then a
-  dedicated adversarial review: run the §4 checklist as live tests
-  (bad-signature token, expired token, wrong-aud token, cross-device access,
-  claim-code brute-force attempt, TLS-intercept attempt).
+- **Phase 4 — Hosting + hardening (code complete 2026-10-02, deploy pending).**
+  Firebase backend implemented behind the storage/auth/blob abstractions:
+  Firestore (`store.py:FirestoreStore`), Cloud Storage (`blobs.py:GCSBlobStore`),
+  Firebase Auth ID-token verification (`auth.py`, provider `firebase`), Hosting
+  rewrites → Cloud Run (`firebase.json`), deny-all Firestore/Storage rules,
+  lazy rotation for scale-to-zero, OAuth tokens in Firestore. Local dev without
+  `firebase.project_id` is byte-for-byte the old behavior. Runbook:
+  `docs/FIREBASE.md`. Blocked on: Firebase project creation + Blaze upgrade
+  (billing attach — Chirag's click). After deploy, run the §4 checklist as
+  live adversarial tests.
 - **Phase 5 (later, optional).** Docker-Compose self-hosted variant for the
   home lab once umbrelOS lands.
 

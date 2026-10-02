@@ -27,6 +27,7 @@ from io import BytesIO
 from PIL import Image
 
 from . import Source, pick_unseen, register
+from token_store import FileTokenStore
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -65,12 +66,13 @@ class GoogleOAuth:
     """Minimal OAuth2 auth-code flow (stdlib only)."""
 
     def __init__(self, client_id, client_secret, redirect_uri, token_path,
-                 http=_http):
+                 http=_http, token_store=None):
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.token_path = token_path
         self._http = http
+        self._token_store = token_store or FileTokenStore(token_path)
         self._tokens = None
 
     # -- authorization -------------------------------------------------
@@ -105,18 +107,12 @@ class GoogleOAuth:
     # -- tokens ---------------------------------------------------------
     def _store(self, tokens):
         tokens["expires_at"] = time.time() + tokens.get("expires_in", 3600) - 60
-        d = os.path.dirname(self.token_path)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        with open(self.token_path, "w") as f:
-            json.dump(tokens, f)
-        os.chmod(self.token_path, 0o600)
+        self._token_store.save(tokens)
         self._tokens = tokens
 
     def _load(self):
-        if self._tokens is None and os.path.exists(self.token_path):
-            with open(self.token_path) as f:
-                self._tokens = json.load(f)
+        if self._tokens is None:
+            self._tokens = self._token_store.load()
         return self._tokens
 
     @property
@@ -126,8 +122,7 @@ class GoogleOAuth:
 
     def disconnect(self):
         self._tokens = None
-        if os.path.exists(self.token_path):
-            os.remove(self.token_path)
+        self._token_store.clear()
 
     def access_token(self):
         t = self._load()
@@ -215,11 +210,15 @@ class PickerClient:
 class PickFlow:
     """Runs the poll -> list -> download -> cleanup sequence."""
 
-    def __init__(self, client, cache_dir, max_items=100):
+    def __init__(self, client, cache_dir, max_items=100, blob_store=None,
+                 blob_prefix="gphotos/"):
         self.client = client
         self.cache_dir = cache_dir
         self.max_items = max_items
-        os.makedirs(cache_dir, exist_ok=True)
+        self.blob_store = blob_store
+        self.blob_prefix = blob_prefix
+        if blob_store is None:
+            os.makedirs(cache_dir, exist_ok=True)
 
     def run(self, session_id, poll=None):
         """Poll until mediaItemsSet (or timeout), import, delete session.
@@ -253,9 +252,14 @@ class PickFlow:
                         continue  # photo frame: images only
                     data = self.client.download(item["baseUrl"])
                     ext = ".jpg" if "jpeg" in item["mimeType"] else ".png"
-                    with open(os.path.join(self.cache_dir,
-                                           item["id"] + ext), "wb") as f:
-                        f.write(data)
+                    name = item["id"] + ext
+                    if self.blob_store is not None:
+                        self.blob_store.put(self.blob_prefix + name, data,
+                                            item["mimeType"])
+                    else:
+                        with open(os.path.join(self.cache_dir, name),
+                                  "wb") as f:
+                            f.write(data)
                     count += 1
                 page_token = resp.get("nextPageToken")
                 if not page_token:
@@ -274,11 +278,20 @@ class GooglePhotosSource(Source):
 
     def __init__(self, cfg):
         super().__init__(cfg)
+        # Server injects a BlobStore here for Cloud Run deployments where
+        # local disk is ephemeral; otherwise the plain cache dir is used.
+        self.blob_store = cfg.get("blob_store")
+        self.blob_prefix = "gphotos/"
         self.cache_dir = cfg.get("cache_dir", default_cache_dir())
-        os.makedirs(self.cache_dir, exist_ok=True)
+        if self.blob_store is None:
+            os.makedirs(self.cache_dir, exist_ok=True)
         self.rng = random.Random()
 
     def _ids(self):
+        if self.blob_store is not None:
+            return sorted(k.split("/")[-1]
+                          for k in self.blob_store.list(self.blob_prefix)
+                          if k.lower().endswith((".jpg", ".jpeg", ".png")))
         return sorted(f for f in os.listdir(self.cache_dir)
                       if f.lower().endswith((".jpg", ".jpeg", ".png")))
 
@@ -286,9 +299,17 @@ class GooglePhotosSource(Source):
         return pick_unseen(self._ids(), history, self.rng)
 
     def load(self, item_id):
-        with open(os.path.join(self.cache_dir, item_id), "rb") as f:
-            img = Image.open(f)
-            img.load()
+        if self.blob_store is not None:
+            data = self.blob_store.get(self.blob_prefix + item_id)
+            if data is None:
+                raise FileNotFoundError(item_id)
+            img = Image.open(BytesIO(data))
+        else:
+            with open(os.path.join(self.cache_dir, item_id), "rb") as f:
+                img = Image.open(f)
+                img.load()
+                return img.convert("RGB")
+        img.load()
         return img.convert("RGB")
 
     def describe(self):
@@ -300,14 +321,19 @@ class GooglePhotosSource(Source):
 class GPhotosController:
     """Owns OAuth + picker state for the server (one user's account)."""
 
-    def __init__(self, cfg, port, http=_http):
+    def __init__(self, cfg, port, http=_http, token_store=None,
+                 blob_store=None, public_url=None):
         g = cfg.get("google_photos", {})
         here = os.path.dirname(os.path.abspath(__file__))
         token_path = os.path.join(here, "..", ".gphotos_token.json")
+        redirect_uri = g.get("redirect_uri") or (
+            (public_url.rstrip("/") if public_url
+             else f"http://localhost:{port}") + "/api/gphotos/callback")
         self.oauth = GoogleOAuth(
             g.get("client_id", ""), g.get("client_secret", ""),
-            f"http://localhost:{port}/api/gphotos/callback",
-            token_path, http)
+            redirect_uri, token_path, http, token_store=token_store)
+        self.blob_store = blob_store
+        self.blob_prefix = "gphotos/"
         self._http = http
         self._states = {}  # oauth state -> timestamp
         self.pick_state = None  # {session_id, picker_uri, status, count, error}
@@ -326,6 +352,8 @@ class GPhotosController:
         return ts is not None and time.time() - ts < 600
 
     def cache_count(self):
+        if self.blob_store is not None:
+            return len(self.blob_store.list(self.blob_prefix))
         d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "..", "data", "gphotos")
         if not os.path.isdir(d):

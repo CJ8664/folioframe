@@ -245,7 +245,7 @@ class TestHTTP(unittest.TestCase):
 
     def login(self):
         status, hdrs, data = self.req(
-            "POST", "/api/auth/google",
+            "POST", "/api/auth/token",
             body=json.dumps({"id_token": "good-token"}),
             headers={"Content-Type": "application/json"})
         self.assertEqual(status, 200)
@@ -261,7 +261,7 @@ class TestHTTP(unittest.TestCase):
 
     def test_forged_login_rejected(self):
         status, _, data = self.req(
-            "POST", "/api/auth/google",
+            "POST", "/api/auth/token",
             body=json.dumps({"id_token": "forged"}),
             headers={"Content-Type": "application/json"})
         self.assertEqual(status, 401)

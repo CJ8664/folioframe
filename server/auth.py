@@ -36,45 +36,78 @@ def _default_verify(id_token_str, client_id):
         id_token_str, grequests.Request(), client_id)
 
 
+def _firebase_verify(id_token_str, project_id):
+    """Verify a Firebase Auth ID token via the Admin SDK (ADC on Cloud Run)."""
+    import firebase_admin
+    from firebase_admin import auth as fauth
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        firebase_admin.initialize_app()  # Application Default Credentials
+    return fauth.verify_id_token(id_token_str)
+
+
 class AuthManager:
     def __init__(self, store, config, verify_fn=None):
         self.store = store
         self.cfg = config.get("auth", {})
+        # provider: "google" (direct Google ID token, local dev) or
+        # "firebase" (Firebase Auth ID token, Cloud Run deployment)
+        self.provider = self.cfg.get("provider", "google")
         self.client_id = (self.cfg.get("client_id")
                           or config.get("google_photos", {}).get("client_id", ""))
+        self.project_id = (self.cfg.get("project_id")
+                           or config.get("firebase", {}).get("project_id", ""))
         self.allowlist = set(self.cfg.get("allowlist", []))
-        self._verify = verify_fn or _default_verify
+        self._verify = verify_fn or (
+            _default_verify if self.provider == "google"
+            else (lambda tok, _cid: _firebase_verify(tok, self.project_id)))
         self.secret = self._load_secret()
 
     def _load_secret(self):
+        # Stable across restarts: kept in the store (Firestore on Cloud Run).
+        # One-time migration from the legacy local file.
+        secret_hex = self.store.get("_service", "session_secret")
+        if secret_hex:
+            return bytes.fromhex(secret_hex)
         here = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(here, ".session_secret")
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                return f.read().strip()
-        secret = secrets.token_bytes(32)
-        with open(path, "wb") as f:
-            f.write(secret)
-        os.chmod(path, 0o600)
+        legacy = os.path.join(here, ".session_secret")
+        if os.path.exists(legacy):
+            with open(legacy, "rb") as f:
+                secret = f.read().strip()
+        else:
+            secret = secrets.token_bytes(32)
+        self.store.put("_service", "session_secret", secret.hex())
         return secret
 
-    # ---- Google token verification ------------------------------------
-    def verify_google_token(self, id_token_str):
-        """Verify and return (sub, email, name). Raises AuthError."""
-        if not self.client_id:
-            raise AuthError("server has no Google OAuth client_id configured")
+    # ---- ID token verification -----------------------------------------
+    def verify_id_token(self, id_token_str):
+        """Verify and return (sub, email, name). Raises AuthError.
+
+        provider "google": Google ID token, aud == our OAuth client ID.
+        provider "firebase": Firebase Auth ID token, aud == project ID.
+        """
+        if self.provider == "firebase":
+            if not self.project_id:
+                raise AuthError("server has no Firebase project_id configured")
+            expected_aud = self.project_id
+            issuers = (f"https://securetoken.google.com/{self.project_id}",)
+        else:
+            if not self.client_id:
+                raise AuthError(
+                    "server has no Google OAuth client_id configured")
+            expected_aud = self.client_id
+            issuers = ("accounts.google.com", "https://accounts.google.com")
         try:
-            info = self._verify(id_token_str, self.client_id)
+            info = self._verify(id_token_str, expected_aud)
         except Exception as e:
             raise AuthError(f"token verification failed: {e}")
-        # Defense in depth: google-auth already checks these, but we assert
-        # the security-critical claims explicitly so a verifier swap can't
-        # silently drop them.
-        if info.get("aud") != self.client_id:
+        # Defense in depth: assert the security-critical claims explicitly so
+        # a verifier swap can't silently drop them.
+        if info.get("aud") != expected_aud:
             raise AuthError("token audience mismatch")
-        if info.get("iss") not in ("accounts.google.com",
-                                   "https://accounts.google.com"):
-            raise AuthError("token issuer not Google")
+        if info.get("iss") not in issuers:
+            raise AuthError("token issuer not trusted")
         if info.get("exp", 0) < time.time() - 60:
             raise AuthError("token expired")
         sub = info.get("sub")
@@ -82,10 +115,14 @@ class AuthManager:
         if not sub:
             raise AuthError("token has no sub claim")
         if not info.get("email_verified"):
-            raise AuthError("email not verified by Google")
+            raise AuthError("email not verified")
         if self.allowlist and email not in self.allowlist:
             raise AuthError("account not on the allowlist")
         return sub, email, info.get("name", "")
+
+    # Backwards-compatible alias (pre-Firebase name).
+    def verify_google_token(self, id_token_str):
+        return self.verify_id_token(id_token_str)
 
     # ---- sessions ------------------------------------------------------
     def _sign(self, session_id):

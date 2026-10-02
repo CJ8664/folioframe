@@ -1,0 +1,1 @@
+{"firestore":{"rules":"firestore.rules"},"hosting":{"ignore":["firebase.json","**/.*","**/node_modules/**"],"public":"public","rewrites":[{"run":{"region":"us-west1","serviceId":"spectraframe"},"source":"**"}]},"storage":{"rules":"storage.rules"}}

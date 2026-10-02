@@ -7,6 +7,7 @@ callers -- see docs/SYSTEM_PLAN.md section 2.4.
 import json
 import os
 import threading
+import time
 
 
 class Store:
@@ -68,3 +69,56 @@ class JsonStore(Store):
     def all(self, collection):
         with self.lock:
             return dict(self.data.get(collection, {}))
+
+
+class FirestoreStore(Store):
+    """Firestore backend. Layout: {collection}/{key} documents.
+
+    Sessions get a server-side expiry timestamp so stale sessions can be
+    swept; reads filter them out. Uses the Admin SDK (Application Default
+    Credentials on Cloud Run); Firestore *security rules do not apply* to
+    this path, so firestore.rules denies all client access.
+    """
+
+    def __init__(self, project_id=None, client=None):
+        if client is None:
+            from google.cloud import firestore
+            client = firestore.Client(project=project_id)
+        self._client = client
+
+    def doc(self, path):
+        return self._client.document(path)
+
+    def _ref(self, collection, key):
+        return self._client.collection(collection).document(key)
+
+    def get(self, collection, key, default=None):
+        snap = self._ref(collection, key).get()
+        if not snap.exists:
+            return default
+        data = snap.to_dict()
+        if collection == "sessions" and data.get("expires_at", 0) < \
+                time.time():
+            self._ref(collection, key).delete()
+            return default
+        return data.get("value", default)
+
+    def put(self, collection, key, value):
+        data = {"value": value}
+        if collection == "sessions":
+            data["expires_at"] = time.time() + 24 * 3600
+        self._ref(collection, key).set(data)
+
+    def delete(self, collection, key):
+        self._ref(collection, key).delete()
+
+    def all(self, collection):
+        out = {}
+        now = time.time()
+        for snap in self._client.collection(collection).stream():
+            data = snap.to_dict()
+            if collection == "sessions" and \
+                    data.get("expires_at", 0) < now:
+                continue
+            out[snap.id] = data.get("value", {})
+        return out
