@@ -105,7 +105,9 @@ understand, and 4 of the 7 analyzed projects already use it.
 | Clock/weather dashboard | ✅ server | `server/sources/dashboard.py` (Open-Meteo, no key) |
 | Server-side dithering | ✅ server | Pillow-C Floyd-Steinberg + Bayer 8x8, measured-ish palette |
 | Rotation engine | ✅ server | unseen-first, no-repeat-until-cycled, quiet hours, 304s |
-| Google Photos / Unsplash | v2 server | needs API key / fragile scraping — documented, not built |
+| Google Photos | ✅ server | `server/sources/google_photos.py` — Picker API (only sanctioned
+|               |          | post-Mar-2025 route), OAuth connect, local cache, unseen-first |
+| Unsplash | v2 server | needs API key — documented, not built |
 
 ## 5. Plan verification (done before coding)
 

@@ -42,9 +42,10 @@ python3 server/spectra_server.py   # :8765, writes server/config.json
 ```
 
 Sources: `folder` (local albums), `picsum`, `url` (templates), `dashboard`
+(clock/weather), `google_photos` (Picker API — see `docs/GOOGLE_PHOTOS.md`)
 (clock + Open-Meteo weather). Rotation engine with unseen-first history,
 quiet hours, and ETag/304. Web UI at `/` with live preview; `/preview.png`,
-`/debug`, `/api/next`, `/api/source`. Tests: `server/tests/run.sh` (22 cases).
+`/debug`, `/api/next`, `/api/source`, `/api/gphotos/*`. Tests: `server/tests/run.sh` (33 cases).
 
 ## Verification
 

@@ -31,7 +31,10 @@ import sources.folder  # noqa: F401  (registers)
 import sources.picsum  # noqa: F401
 import sources.url  # noqa: F401
 import sources.dashboard  # noqa: F401
+import sources.google_photos  # noqa: F401
 from sources import SOURCES
+from sources.google_photos import (GPhotosController, PickerClient, PickFlow,
+                                   default_cache_dir)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -83,6 +86,7 @@ class Server:
                 self.state.update(json.load(f))
         self.lock = threading.Lock()
         self.source = self._make_source(self.cfg.get("source", "picsum"))
+        self.gphotos = GPhotosController(self.cfg, self.cfg.get("port", 8765))
         self.frame = None
         self.etag = None
         self.preview = None
@@ -109,6 +113,27 @@ class Server:
             with open(CONFIG_PATH, "w") as f:
                 json.dump(self.cfg, f, indent=2)
         self.rotate(force=True)
+
+    def gphotos_pick(self):
+        """Create a picker session and import in the background."""
+        gp = self.gphotos
+        if not gp.oauth.connected:
+            raise RuntimeError("Google Photos not connected")
+        client = PickerClient(gp.oauth)
+        session = client.create_session()
+        gp.pick_state = {"session_id": session["id"],
+                         "picker_uri": session["pickerUri"],
+                         "status": "waiting", "count": 0, "error": ""}
+
+        def run():
+            try:
+                n = PickFlow(client, default_cache_dir()).run(session["id"])
+                gp.pick_state.update(status="done", count=n)
+            except Exception as e:
+                gp.pick_state.update(status="error", error=str(e))
+
+        threading.Thread(target=run, daemon=True).start()
+        return gp.pick_state["picker_uri"]
 
     def rotate(self, force=False):
         with self.lock:
@@ -207,6 +232,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif p == "/debug":
             self._send(200, "application/json",
                         json.dumps(APP.describe()).encode())
+        elif p == "/api/gphotos/connect":
+            gp = APP.gphotos
+            if not gp.configured:
+                html = """<html><body><h2>Google Photos setup needed</h2>
+<p>Add your OAuth client to <code>server/config.json</code>:</p>
+<pre>"google_photos": {
+  "client_id": "...apps.googleusercontent.com",
+  "client_secret": "..."
+}</pre>
+<p>See <code>docs/GOOGLE_PHOTOS.md</code> for the Cloud Console steps,
+then restart the server and click Connect again.</p></body></html>"""
+                self._send(200, "text/html", html.encode())
+            else:
+                self.send_response(302)
+                self.send_header(
+                    "Location", gp.oauth.auth_url(gp.new_state()))
+                self.end_headers()
+        elif p == "/api/gphotos/callback":
+            q = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
+            code, state = q.get("code", [""])[0], q.get("state", [""])[0]
+            gp = APP.gphotos
+            if not code or not gp.valid_state(state):
+                self._send(400, "text/plain", b"bad oauth response")
+            else:
+                try:
+                    gp.oauth.exchange_code(code)
+                    self.send_response(302)
+                    self.send_header("Location", "/")
+                    self.end_headers()
+                except Exception as e:
+                    self._send(500, "text/plain",
+                                f"connect failed: {e}".encode())
+        elif p == "/api/gphotos/status":
+            gp = APP.gphotos
+            ps = gp.pick_state or {}
+            self._send(200, "application/json", json.dumps({
+                "configured": gp.configured,
+                "connected": gp.oauth.connected,
+                "cached": gp.cache_count(),
+                "picking": ps.get("status") == "waiting",
+                "picker_uri": ps.get("picker_uri", ""),
+                "pick_status": ps.get("status", ""),
+                "pick_count": ps.get("count", 0),
+                "pick_error": ps.get("error", ""),
+            }).encode())
         elif p == "/":
             d = APP.describe()
             opts = "".join(
@@ -220,6 +291,29 @@ error: {d['last_error'] or 'none'}</p>
 <form method='POST' action='/api/next'><button>Rotate now</button></form>
 <form method='POST' action='/api/source'><select name='name'>{opts}</select>
 <button>Switch source</button></form>
+<h3>Google Photos</h3>
+<div id='gphotos'>loading…</div>
+<script>
+fetch('/api/gphotos/status').then(r=>r.json()).then(s=>{{
+  const el=document.getElementById('gphotos');
+  if(!s.configured){{
+    el.innerHTML='<a href="/api/gphotos/connect">Set up</a> (needs OAuth client — see docs/GOOGLE_PHOTOS.md)';
+  }} else if(!s.connected){{
+    el.innerHTML='<a href="/api/gphotos/connect"><button>Connect Google Photos</button></a>';
+  }} else {{
+    let h=`connected · ${{s.cached}} photos cached`;
+    if(s.picking) h+=`<br>waiting for picks… <a href="${{s.picker_uri}}" target="_blank">open picker</a>`;
+    else if(s.pick_status==='done') h+=`<br>last import: ${{s.pick_count}} photos`;
+    else if(s.pick_status==='error') h+=`<br>import error: ${{s.pick_error}}`;
+    else if(s.picker_uri) h+=`<br><a href="${{s.picker_uri}}" target="_blank">open picker</a>`;
+    h+=`<br><form method='POST' action='/api/gphotos/pick' style='display:inline'>
+<button>Pick more photos</button></form>
+<form method='POST' action='/api/gphotos/disconnect' style='display:inline'>
+<button>Disconnect</button></form>`;
+    el.innerHTML=h;
+  }}
+}});
+</script>
 <p><a href='/debug'>debug JSON</a></p></body></html>"""
             self._send(200, "text/html", html.encode())
         else:
@@ -231,7 +325,18 @@ error: {d['last_error'] or 'none'}</p>
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         args = urllib.parse.parse_qs(body)
-        if p == "/api/next":
+        if p == "/api/gphotos/pick":
+            try:
+                uri = APP.gphotos_pick()
+                self._send(200, "application/json", json.dumps(
+                    {"ok": True, "picker_uri": uri}).encode())
+            except Exception as e:
+                self._send(400, "application/json", json.dumps(
+                    {"ok": False, "error": str(e)}).encode())
+        elif p == "/api/gphotos/disconnect":
+            APP.gphotos.oauth.disconnect()
+            self._send(200, "application/json", b'{"ok": true}')
+        elif p == "/api/next":
             ok = APP.rotate(force=True)
             self._send(200, "application/json",
                         json.dumps({"ok": ok}).encode())
