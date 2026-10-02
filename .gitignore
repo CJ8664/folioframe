@@ -8,3 +8,6 @@ state.json
 __pycache__/
 server/.gphotos_token.json
 server/data/
+server/.session_secret
+server/data/
+server/.gphotos_token.json
