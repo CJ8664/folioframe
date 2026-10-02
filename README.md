@@ -32,6 +32,20 @@ Any server can feed the frame — see [PROTOCOL.md](PROTOCOL.md). Contract:
 `GET /frame` → 960 000 bytes packed 4bpp + `ETag`; `304` skips the repaint.
 OTA: `GET /version` → build number, `GET /firmware.bin` → app image.
 
+## Companion server
+
+`server/` is a working PROTOCOL.md server (Python + Pillow):
+
+```bash
+pip install -r server/requirements.txt
+python3 server/spectra_server.py   # :8765, writes server/config.json
+```
+
+Sources: `folder` (local albums), `picsum`, `url` (templates), `dashboard`
+(clock + Open-Meteo weather). Rotation engine with unseen-first history,
+quiet hours, and ETag/304. Web UI at `/` with live preview; `/preview.png`,
+`/debug`, `/api/next`, `/api/source`. Tests: `server/tests/run.sh` (22 cases).
+
 ## Verification
 
 - **Level 1** — native unit tests: `tools/run_tests.sh` (24 cases, all `core/`)

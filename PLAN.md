@@ -9,16 +9,22 @@ GDEB0709E01 7.09" Spectra 6** (the user's board + panel).
 
 "Combine the features" is scoped honestly:
 
-- **In scope (v1):** every *device-firmware* feature from the superset that is
+- **In scope (v1 firmware):** every *device-firmware* feature from the superset that is
   hardware-meaningful: panel drivers, image fetch, scheduling, quiet hours, power
   management, battery telemetry, provisioning, config portal, OTA, buttons, time
   sync, debug tooling.
-- **Integration points, not rewrites (documented seams):** server-side dashboard
-  frameworks (Tesserae), companion image servers, mobile apps, Cloudflare
-  backends. Rewriting those would duplicate mature projects; instead the firmware
-  speaks a small documented HTTP protocol (`PROTOCOL.md`) any of them can feed.
+- **In scope (v1 server):** `server/` companion service implementing the content
+  sources and rendering the firmware cannot do itself: local folder albums,
+  picsum.photos, URL templates, a PIL-rendered clock/weather dashboard
+  (Open-Meteo, no key), Pillow-C Floyd-Steinberg/Bayer dithering to Spectra 6,
+  packed-4bpp frame packing, rotation engine (unseen-first, no-repeat),
+  quiet hours, ETag/304, and the PROTOCOL.md endpoints (`/frame`, `/version`,
+  `/firmware.bin`) plus a web UI with preview.
+- **Integration points, not rewrites:** Tesserae's 40-widget framework, mobile
+  apps, Cloudflare backends. Any of them can feed the firmware via PROTOCOL.md.
 - **v2 roadmap (seams prepared, not implemented):** on-device JPEG decode,
-  BLE provisioning, touch input, MQTT transport, native Home Assistant API.
+  BLE provisioning, touch input, MQTT transport, native Home Assistant API,
+  Google Photos / Unsplash sources (API keys), face-detection smart crop.
 
 ## 2. Language decision
 
@@ -94,6 +100,12 @@ understand, and 4 of the 7 analyzed projects already use it.
 | Touch input | v2 | Seam: `hal/Board::touchRegions()` |
 | MQTT / HA native API | v2 | Seam: `app/Reporter` interface |
 | Partial refresh | driver-limited | Exposed via `Panel::supportsPartial()`; GDEB0709E01 init is full-refresh |
+| Local folder albums | ✅ server | `server/sources/folder.py`, unseen-first rotation |
+| picsum.photos / URL sources | ✅ server | `server/sources/picsum.py`, `url.py`, `{seed}` tokens |
+| Clock/weather dashboard | ✅ server | `server/sources/dashboard.py` (Open-Meteo, no key) |
+| Server-side dithering | ✅ server | Pillow-C Floyd-Steinberg + Bayer 8x8, measured-ish palette |
+| Rotation engine | ✅ server | unseen-first, no-repeat-until-cycled, quiet hours, 304s |
+| Google Photos / Unsplash | v2 server | needs API key / fragile scraping — documented, not built |
 
 ## 5. Plan verification (done before coding)
 
