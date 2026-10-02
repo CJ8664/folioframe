@@ -1,24 +1,83 @@
-# SpectraFrame Device ↔ Server Protocol v1
+# SpectraFrame Device ↔ Server Protocol v2
 
-Small, versioned HTTP contract. Any server (Python, Node, Cloudflare Worker,
-Tesserae renderer, static file host) can feed the frame by implementing it.
+Replaces v1. The anonymous `GET /frame` is **removed** — every device endpoint
+requires authentication, and every human endpoint requires a signed-in session.
+There is no unauthenticated path to any frame, photo, or device control.
 
-## Frame fetch
+Small, versioned HTTP contract. Any server can feed the frame by implementing it.
+
+## Identities
+
+- `device_id`: `sf-` + lowercase 12-hex-digit ESP32-S3 MAC, e.g. `sf-94a9a811c2f4`.
+  A username, **not** a secret.
+- Device credential: 256-bit random Bearer token, issued by the server at claim
+  time, stored hashed (SHA-256) server-side. Sent as
+  `Authorization: Bearer <token>` on every device request.
+- Human: Google account. The server verifies the Google ID token
+  (signature via Google JWKS, `aud` == our client ID, `iss` is Google,
+  `exp` not passed, `email_verified`), then mints an
+  `httpOnly` + `Secure` + `SameSite=Lax` session cookie. The Google `sub`
+  claim is the stable user key.
+- **One device ↔ one user, strictly.** A device has exactly one owner at any
+  time. Claiming an already-paired device fails unless the owner unpaired it
+  first (or the device was factory-reset, which revokes its token).
+
+## Pairing (claim-code flow)
 
 ```
-GET <image_endpoint>            (default: /frame)
+DEVICE                                        SERVER                    CONSOLE
+  |-- POST /v1/device/register ---------------→|                            |
+  |   {device_id, panel, fw}                   |                            |
+  |←-- 201 {claim_code, expires_in} -----------|                            |
+  |   (shows QR + XXXX-XXXX on e-ink;          |                            |
+  |    polls POST /v1/device/claim every 10s)  |                            |
+  |                                            |←-- signed-in user enters --|
+  |                                            |   code at /claim          |
+  |                                            |-- binds device → user ----→|
+  |←-- 200 {status:"claimed",                  |                            |
+  |         device_token, device_id} ----------|                            |
+  |   (stores token in NVS, reboots to normal mode)                         |
 ```
+
+- `POST /v1/device/register` is the **only** unauthenticated device endpoint.
+  Rate-limited (5/min/IP). Re-registering an already-paired device issues a
+  fresh code but keeps the old token valid until the new claim completes —
+  ownership transfer requires physical access to read the new code.
+- Claim codes: 8 chars from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as
+  `XXXX-XXXX`. TTL 10 minutes, single-use, constant-time comparison.
+- The claim poll returns `{"status":"pending"}` until approval — identical
+  shape for bad codes (no guessing oracle). The token is delivered **once**;
+  after delivery the code is burned.
+- Unpair: console `DELETE /api/devices/{id}` (owner only), or the device
+  itself `POST /v1/device/unpair` (Bearer; used by factory reset). Both revoke
+  the token immediately.
+
+## Device API (all require `Authorization: Bearer <token>`)
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/v1/device/register` | unauthenticated, rate-limited; starts claim flow |
+| `POST` | `/v1/device/claim` | `{device_id, claim_code}`; `pending` or `claimed`+token |
+| `GET` | `/v1/device/frame` | packed-4bpp frame **for this device**; `If-None-Match` → `304` |
+| `POST` | `/v1/device/status` | heartbeat `{battery_mv, battery_pct, rssi, fw}` |
+| `POST` | `/v1/device/unpair` | device-initiated unpair (factory reset) |
+| `GET` | `/v1/device/ota/version` | plain-text build number |
+| `GET` | `/v1/device/ota/firmware.bin` | ESP32 app image (when published) |
+
+Auth failures return `401`; a valid token addressing anything outside its own
+device returns `404` (never `403`, to avoid leaking device existence).
+
+### Frame fetch
 
 **Request headers (device → server):**
 
 | Header | Example | Purpose |
 |---|---|---|
-| `X-Device-Id` | `SF-A1B2C3` | Stable device id (from MAC) |
-| `X-Device-Panel` | `gdeb0709e01` | Panel kind; server picks correct variant |
-| `X-Device-Width` / `X-Device-Height` | `1200` / `1600` | Panel-native geometry |
-| `X-Firmware-Version` | `1.0.0` | For server-side fleet views |
-| `X-Battery-Mv` / `X-Battery-Pct` | `4050` / `87` | Telemetry |
-| `If-None-Match` | `"abc123"` | Sent when the device has a cached ETag |
+| `Authorization` | `Bearer <256-bit token>` | device identity (required) |
+| `X-Device-Panel` | `gdeb0709e01` | panel kind; server picks correct variant |
+| `X-Device-Width` / `X-Device-Height` | `1200` / `1600` | panel-native geometry |
+| `X-Firmware-Version` | `2.0.0` | fleet views |
+| `If-None-Match` | `"abc123"` | sent when the device has a cached ETag |
 
 **Success response:**
 
@@ -26,7 +85,7 @@ GET <image_endpoint>            (default: /frame)
 |---|---|
 | `200 OK` | |
 | `Content-Type` | `application/octet-stream` |
-| `ETag` | opaque version string, quoted |
+| `ETag` | opaque version string, quoted (per-device) |
 | `X-Frame-Format` | `packed4bpp` |
 
 Body: exactly `width × height / 2` bytes (960 000 for 1200×1600).
@@ -34,34 +93,44 @@ Body: exactly `width × height / 2` bytes (960 000 for 1200×1600).
 left→right. Nibble values: `0x0` white, `0x2` green, `0x6` red, `0xB` yellow,
 `0xD` blue, `0xF` black (UC8179 hardware codes).
 
-**Not-modified response:** `304 Not Modified` (no body) → device skips the
-~30 s panel refresh and goes back to sleep. This is the single biggest power
-saver in the protocol.
+**Not-modified:** `304 Not Modified` (no body) → device skips the ~30 s panel
+refresh and goes back to sleep. This is the single biggest power saver.
+
+**Transport:** HTTPS only, with full certificate-chain validation on the
+device (CA bundle). `setInsecure()` and plain HTTP are not permitted.
 
 **Errors:** `4xx/5xx` → device keeps the current image, backs off, retries next
 wake. `404` with an empty queue is normal: keep image, sleep.
 
-## OTA
+## Human API (all require signed-in session; mutations require CSRF token)
 
-```
-GET <ota_base>/version        → 200 text/plain, e.g. "1.2.0"
-GET <ota_base>/firmware.bin   → 200 application/octet-stream (ESP32 app image)
-```
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/login` | Google Identity Services button |
+| `POST` | `/api/auth/google` | `{id_token}` → session cookie |
+| `POST` | `/api/auth/logout` | destroys session |
+| `GET` | `/` | console: my devices (login required) |
+| `GET` | `/claim` | enter a device claim code |
+| `GET` | `/api/session` | `{email, csrf}` for the console JS |
+| `GET` | `/api/devices` | my devices + status |
+| `POST` | `/api/devices/claim` | `{code}` → claims device to me |
+| `PATCH` | `/api/devices/{id}` | rename |
+| `DELETE` | `/api/devices/{id}` | unpair (revokes token) |
+| `POST` | `/api/devices/{id}/photos/upload` | multipart photo → **pinned override** (force push) |
+| `DELETE` | `/api/devices/{id}/photos/override` | clear override, resume assigned source |
+| `GET` | `/api/devices/{id}/preview` | PNG of what the device currently shows |
 
-Response may include `X-Firmware-MD5` (32 lowercase hex chars); the device
-verifies before flashing. Any version string differing from the running
-version triggers an update — publishing an older version is a deliberate
-rollback. `404` on `/version` means "no update channel", silently skipped.
+## Priority override ("force push")
 
-## Debug
-
-```
-GET /debug   → 200 application/json (served by the device, not the server)
-{"device":"SF-A1B2C3","fw":"1.0.0","battery_mv":4050,"battery_pct":87,
- "rssi":-61,"uptime_s":42,"last_error":"","panel":"gdeb0709e01"}
-```
+Uploading a photo from the console pins it as the device's current frame
+**immediately, server-side**, overriding the assigned source (Google Photos
+feed, etc.). The device picks it up at its next scheduled wake — delivery
+latency is one wake interval, because a deep-sleeping radio cannot be woken
+remotely. The override pins until cleared or replaced; clearing resumes the
+assigned source where its rotation left off.
 
 ## Versioning
 
-Breaking changes bump the `vN` in this document and the `X-Frame-Format`
-negotiation. v1 servers and v1 devices are mutually compatible.
+The major version in this document's title is the contract version. Breaking
+changes bump it; the device sends `X-Frame-Format` and firmware version so the
+server can reject mismatches explicitly.

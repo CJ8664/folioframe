@@ -167,6 +167,9 @@ Human (session cookie):
 - `PATCH /api/devices/{id}` — rename, set source, set refresh interval
 - `DELETE /api/devices/{id}` — unpair (rotates token server-side)
 - `POST /api/devices/{id}/photos/upload` — local file → that device's library
+- `POST /api/devices/{id}/photos/upload` — phone upload → sets the **pinned
+  override** (force-push, §3.6); takes precedence over the assigned source
+- `DELETE /api/devices/{id}/photos/override` — clear the override, resume source
 - `POST /api/devices/{id}/photos/refresh` — force re-render now
 - `GET /api/devices/{id}/preview` — what the device currently shows
 
@@ -192,6 +195,26 @@ wake can yield a fresh photo with nobody touching a phone.
 Google Photos stays a **manual-pick-and-cache** flow (Picker API limitation,
 unchanged) — but the *picking* is per user in the console, and the *serving* to
 each device is automatic afterwards.
+
+### 3.6 Priority override ("force push" from the phone)
+
+From the web console (signed in), Chirag can upload a photo from his phone and
+**force it onto a device immediately**, overriding whatever source is assigned
+(Google Photos feed, etc.).
+
+Honest physics note: the device deep-sleeps between wakes, so nothing can wake
+its radio remotely. "Push" therefore means: the upload **instantly becomes the
+device's current frame server-side** (a pinned override that takes precedence
+over the rotation queue), and the device picks it up at its **next scheduled
+wake**. Delivery latency = one wake interval. The console shows the device's
+last-seen time and next expected check-in so the wait is visible, not mysterious.
+
+- The override pins until Chirag clears it (or uploads a replacement) — it does
+  not expire on its own and is not consumed by one display.
+- Clearing the override resumes the assigned source where its rotation left off.
+- `POST /api/devices/{id}/photos/upload` sets the override;
+  `DELETE /api/devices/{id}/photos/override` clears it;
+  `GET /api/devices/{id}/preview` reflects the override.
 
 ## 4. Plan review & risk assessment
 
@@ -286,10 +309,22 @@ keeping it would violate the hard requirement.
 No calendar promises — each phase reports its verification before the next
 starts, per the standing proof-checklist rule.
 
-## 7. Open decisions for Chirag
+## 7. Decisions (recorded 2026-10-02)
 
-1. **Hosting:** Firebase (recommended, §2.4) or home-lab-first?
-2. **Scope:** single-user allowlist (just you) with multi-user-capable schema —
-   confirm, or want multi-user now?
-3. **Google Photos:** keep the existing Picker flow as the only Google source
-   for v1 (yes — the Library API restriction leaves no alternative).
+1. **Hosting: Firebase.** Proceeding with Firebase (Auth + Cloud Run + Firestore);
+   keeping the server portable via the storage abstraction so a self-hosted
+   Docker variant stays possible. If any Firebase step proves hard, flag it
+   instead of pushing through.
+2. **One device ↔ one user, strictly.** A device has exactly one owner at any
+   time. Claiming an already-paired device fails unless the current owner
+   unpairs it first (or the device is factory-reset, which revokes its token).
+   Re-claiming transfers ownership: the old token is revoked atomically at
+   claim time, so there is never a moment with two owners.
+3. **Scope:** single-user allowlist (Chirag) with multi-user-capable schema —
+   pending explicit confirmation.
+4. **Google Photos:** Picker-only for v1 — **confirmed** 2026-10-02.
+5. **Force push (2026-10-02):** uploading a photo from the phone (signed in)
+   must be able to override the device's assigned source immediately (§3.6).
+   Implemented as a server-side pinned override; delivery latency = one device
+   wake interval (deep sleep makes true remote wake impossible — documented
+   honestly in the console UI).

@@ -1,1 +1,2 @@
 Pillow>=9
+google-auth>=2
