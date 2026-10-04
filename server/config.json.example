@@ -15,10 +15,6 @@
   "folder": {
     "dir": "~/Pictures/frame"
   },
-  "google_photos": {
-    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
-    "client_secret": "YOUR_GOOGLE_OAUTH_CLIENT_SECRET"
-  },
   "picsum": {
     "height": 1600,
     "width": 1200
@@ -31,5 +27,6 @@
   "source": "picsum",
   "url": {
     "template": "https://picsum.photos/seed/{seed}/1200/1600"
-  }
+  },
+  "_note": "Google Photos OAuth client is set up in the console wizard after first login (no config needed)."
 }

@@ -63,22 +63,39 @@ def default_cache_dir():
 
 
 class GoogleOAuth:
-    """Minimal OAuth2 auth-code flow (stdlib only)."""
+    """Minimal OAuth2 auth-code flow (stdlib only).
 
-    def __init__(self, client_id, client_secret, redirect_uri, token_path,
-                 http=_http, token_store=None):
-        self.client_id = client_id
-        self.client_secret = client_secret
+    client_provider: optional callable returning (client_id, client_secret).
+    When given, credentials are resolved at call time so they can be set or
+    rotated at runtime (e.g. by the in-console setup wizard) without
+    reconstructing this object. Otherwise the constructor values are used.
+    """
+
+    def __init__(self, client_id="", client_secret="", redirect_uri="",
+                 token_path="", http=_http, token_store=None,
+                 client_provider=None):
+        if client_provider is not None:
+            self._client_provider = client_provider
+        else:
+            self._client_provider = lambda: (client_id, client_secret)
         self.redirect_uri = redirect_uri
         self.token_path = token_path
         self._http = http
         self._token_store = token_store or FileTokenStore(token_path)
         self._tokens = None
 
+    def _cid(self):
+        cid, _ = self._client_provider()
+        return cid
+
+    def _csecret(self):
+        _, csecret = self._client_provider()
+        return csecret
+
     # -- authorization -------------------------------------------------
     def auth_url(self, state):
         q = urllib.parse.urlencode({
-            "client_id": self.client_id,
+            "client_id": self._cid(),
             "redirect_uri": self.redirect_uri,
             "response_type": "code",
             "scope": SCOPE,
@@ -91,8 +108,8 @@ class GoogleOAuth:
     def exchange_code(self, code):
         body = urllib.parse.urlencode({
             "code": code,
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
+            "client_id": self._cid(),
+            "client_secret": self._csecret(),
             "redirect_uri": self.redirect_uri,
             "grant_type": "authorization_code",
         }).encode()
@@ -133,8 +150,8 @@ class GoogleOAuth:
         # refresh
         body = urllib.parse.urlencode({
             "refresh_token": t["refresh_token"],
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
+            "client_id": self._cid(),
+            "client_secret": self._csecret(),
             "grant_type": "refresh_token",
         }).encode()
         status, raw = self._http(
@@ -322,16 +339,20 @@ class GPhotosController:
     """Owns OAuth + picker state for the server (one user's account)."""
 
     def __init__(self, cfg, port, http=_http, token_store=None,
-                 blob_store=None, public_url=None):
+                 blob_store=None, public_url=None, client_provider=None):
         g = cfg.get("google_photos", {})
         here = os.path.dirname(os.path.abspath(__file__))
         token_path = os.path.join(here, "..", ".gphotos_token.json")
         redirect_uri = g.get("redirect_uri") or (
             (public_url.rstrip("/") if public_url
              else f"http://localhost:{port}") + "/api/gphotos/callback")
+        # Credentials resolve at call time: the in-console setup wizard can
+        # save them to the store without a restart; config.json is fallback.
+        self._cfg_client = (g.get("client_id", ""), g.get("client_secret", ""))
+        self._client_provider = client_provider or (lambda: self._cfg_client)
         self.oauth = GoogleOAuth(
-            g.get("client_id", ""), g.get("client_secret", ""),
-            redirect_uri, token_path, http, token_store=token_store)
+            redirect_uri=redirect_uri, token_path=token_path, http=http,
+            token_store=token_store, client_provider=self._client_provider)
         self.blob_store = blob_store
         self.blob_prefix = "gphotos/"
         self._http = http
@@ -340,7 +361,8 @@ class GPhotosController:
 
     @property
     def configured(self):
-        return bool(self.oauth.client_id and self.oauth.client_secret)
+        cid, csec = self._client_provider()
+        return bool(cid and csec)
 
     def new_state(self):
         s = secrets.token_urlsafe(16)

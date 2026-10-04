@@ -86,13 +86,13 @@ gcloud run deploy spectraframe --source . --region=us-west1 \
     "provider": "firebase",
     "project_id": "<project-id>",
     "allowlist": ["er.chiragjain92@gmail.com"]
-  },
-  "google_photos": {
-    "client_id": "<oauth client id>",
-    "client_secret": "<oauth client secret>"
   }
 }
 ```
+
+The Google Photos OAuth client is set up from the console after first login
+(setup wizard) — it is not part of this JSON. If you prefer config files,
+`google_photos: {client_id, client_secret}` remains a supported fallback.
 
 Notes:
 

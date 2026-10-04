@@ -413,6 +413,61 @@ class TestHTTP(unittest.TestCase):
             headers=h)
         self.assertEqual(status, 200)
 
+    def test_gphotos_setup_wizard(self):
+        # unauthenticated -> 401
+        status, _, _ = self.req(
+            "POST", "/api/gphotos/setup",
+            body=json.dumps({"client_id": "a", "client_secret": "b"}),
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 401)
+
+        cookie, csrf = self.login()
+        h = {"Content-Type": "application/json", "Cookie": cookie,
+             "X-CSRF-Token": csrf}
+        # missing CSRF -> 403
+        status, _, _ = self.req(
+            "POST", "/api/gphotos/setup",
+            body=json.dumps({"client_id": "a", "client_secret": "b"}),
+            headers={"Content-Type": "application/json", "Cookie": cookie})
+        self.assertEqual(status, 403)
+        # missing fields -> 400
+        status, _, _ = self.req("POST", "/api/gphotos/setup",
+                                body=json.dumps({"client_id": "a"}),
+                                headers=h)
+        self.assertEqual(status, 400)
+        # happy path: client saved, takes effect without restart
+        status, _, data = self.req(
+            "POST", "/api/gphotos/setup",
+            body=json.dumps({"client_id": "wizard-id",
+                             "client_secret": "wizard-secret"}),
+            headers=h)
+        self.assertEqual(status, 200, data[:200])
+        self.assertTrue(spectra_server.APP.gphotos.configured)
+        # the secret is write-only: status never exposes it
+        status, _, data = self.req("GET", "/api/gphotos/status",
+                                   headers={"Cookie": cookie})
+        body = data.decode()
+        self.assertNotIn("wizard-secret", body)
+        self.assertNotIn("client_secret", body)
+        self.assertIn('"configured": true', body)
+        # bootstrap closed: with an empty allowlist, only the first
+        # setup (above) is permitted
+        status, _, _ = self.req(
+            "POST", "/api/gphotos/setup",
+            body=json.dumps({"client_id": "x", "client_secret": "y"}),
+            headers=h)
+        self.assertEqual(status, 403)
+
+    def test_gphotos_setup_allowlist_rule(self):
+        srv = spectra_server.APP
+        old = srv.auth.allowlist
+        srv.auth.allowlist = {"chirag@example.com"}
+        try:
+            self.assertTrue(srv.can_setup_photos("chirag@example.com"))
+            self.assertFalse(srv.can_setup_photos("stranger@example.com"))
+        finally:
+            srv.auth.allowlist = old
+
     def test_legacy_anonymous_frame_is_gone(self):
         status, _, _ = self.req("GET", "/frame")
         self.assertEqual(status, 404)

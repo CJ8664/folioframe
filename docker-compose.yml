@@ -1,11 +1,14 @@
 # SpectraFrame — self-hosted Docker Compose
 #
-# Run on any Docker host (umbrelOS, home server, VPS):
-#   1. Copy server/config.json.example -> server/config.json and edit it
-#      (at minimum: public_url, auth.allowlist, google_photos client).
-#   2. docker compose up -d --build
-#   3. Open https://<your-public-host>/login
+# Two ways to configure (pick one):
+#   A. Environment (recommended for Portainer): in the Portainer UI add an
+#      environment variable SPECTRA_CONFIG_JSON with your full config JSON
+#      (same keys as server/config.json.example). No files needed.
+#   B. Shell (SSH): SPECTRA_CONFIG_JSON="$(cat server/config.json)" \
+#         docker compose up -d --build
 #
+# The container needs no config file mounted: on first boot the server
+# writes a default config, then SPECTRA_CONFIG_JSON overrides it.
 # Data (device registry, photo blobs, Photos cache) lives in the
 # spectra-data volume and survives rebuilds. Back it up with:
 #   docker run --rm -v spectraframe_spectra-data:/data \
@@ -20,10 +23,8 @@ services:
       - "8765:8765"
     environment:
       PORT: "8765"
-      # Alternative to the config file mount: full JSON config via env.
-      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com",...}'
+      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com","auth":{"provider":"google","client_id":"YOUR_CLIENT_ID.apps.googleusercontent.com","allowlist":["you@example.com"]},"source":"picsum"}'
     volumes:
-      - ./server/config.json:/app/server/config.json:ro
       - spectra-data:/app/server/data
     restart: unless-stopped
     healthcheck:

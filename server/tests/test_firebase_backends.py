@@ -225,6 +225,29 @@ class TestFirebaseAuthProvider(unittest.TestCase):
             self._auth(claims).verify_id_token("forged")
 
 
+class TestClientProvider(unittest.TestCase):
+    def test_runtime_client_resolution(self):
+        from sources.google_photos import GoogleOAuth, GPhotosController
+        creds = {"cid": "first", "sec": "s1"}
+        o = GoogleOAuth(redirect_uri="http://x/cb",
+                        token_path="/tmp/sf-test-nope.json",
+                        client_provider=lambda: (creds["cid"], creds["sec"]))
+        self.assertIn("client_id=first", o.auth_url("st"))
+        creds.update(cid="second", sec="s2")  # rotation, no restart
+        self.assertIn("client_id=second", o.auth_url("st"))
+
+    def test_controller_configured_flips(self):
+        from sources.google_photos import GPhotosController
+        state = {}
+        c = GPhotosController(
+            {}, 8765,
+            client_provider=lambda: (state.get("cid", ""),
+                                     state.get("sec", "")))
+        self.assertFalse(c.configured)
+        state.update(cid="a", sec="b")
+        self.assertTrue(c.configured)
+
+
 class TestServerEnvConfig(unittest.TestCase):
     def test_env_config_overrides_file(self):
         tmp = tempfile.mkdtemp()

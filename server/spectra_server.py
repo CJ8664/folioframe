@@ -104,6 +104,12 @@ class Server:
         env_cfg = os.environ.get("SPECTRA_CONFIG_JSON")
         if env_cfg:
             self.cfg.update(json.loads(env_cfg))
+        if self.cfg.get("auth", {}).get("provider", "google") == "google" \
+                and not (self.cfg.get("auth", {}).get("client_id")
+                         or self.cfg.get("google_photos", {}).get("client_id")):
+            print("WARNING: no Google OAuth client_id configured "
+                  "(auth.client_id). The /login page will render but sign-in "
+                  "will fail. Set it via config or SPECTRA_CONFIG_JSON.")
 
         # ---- Firebase mode ------------------------------------------------
         # Enabled when config has firebase.project_id. On Cloud Run this
@@ -149,7 +155,25 @@ class Server:
         self.source = self._make_source(self.cfg.get("source", "picsum"))
         self.gphotos = GPhotosController(
             self.cfg, self.cfg.get("port", 8765), token_store=token_store,
-            blob_store=self.blobs, public_url=self.public_url or None)
+            blob_store=self.blobs, public_url=self.public_url or None,
+            client_provider=self._gphotos_client)
+
+    def _gphotos_client(self):
+        """(client_id, client_secret): setup wizard's saved values first,
+        config.json fallback. Lets the Photos OAuth client be configured
+        from the console after login, with no restart."""
+        saved = self.store.get("_service", "gphotos_client") or {}
+        if saved.get("client_id") and saved.get("client_secret"):
+            return (saved["client_id"], saved["client_secret"])
+        g = self.cfg.get("google_photos", {})
+        return (g.get("client_id", ""), g.get("client_secret", ""))
+
+    def can_setup_photos(self, email):
+        """Who may save the Photos OAuth client: allowlisted users, or --
+        for a fresh open console -- anyone until the first client is saved."""
+        if email in self.auth.allowlist:
+            return True
+        return not self.auth.allowlist and not self.gphotos.configured
         self.frame = None
         self.etag = None
         self.preview = None
@@ -719,6 +743,33 @@ then restart the server and click Connect again.</p></body></html>"""
                                      "next wake"})
             return
 
+        if p == "/api/gphotos/setup":
+            # Save the Photos OAuth client (one-time, via the in-console
+            # wizard). The secret is write-only: no endpoint ever returns it.
+            got = self._require_human()
+            if not got or not self._require_csrf(got[1]):
+                return
+            _, _, sub = got
+            user = APP.store.get("users", sub) or {}
+            if not APP.can_setup_photos(user.get("email", "")):
+                self._json(403, {"ok": False, "error": "not permitted"})
+                return
+            data = self._read_json()
+            if data is None:
+                self._json(400, {"ok": False, "error": "bad json"})
+                return
+            cid = (data.get("client_id") or "").strip()
+            csec = (data.get("client_secret") or "").strip()
+            if not cid or not csec:
+                self._json(400, {"ok": False,
+                                 "error": "client_id and client_secret "
+                                          "are required"})
+                return
+            APP.store.put("_service", "gphotos_client",
+                          {"client_id": cid, "client_secret": csec})
+            self._json(200, {"ok": True})
+            return
+
         if p == "/api/gphotos/pick":
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
@@ -908,10 +959,45 @@ async function init(){
       <button onclick='unpair("${dev.device_id}")'>Unpair</button>
     </div>`).join('');
   const g=await (await fetch('/api/gphotos/status')).json();
-  document.getElementById('srv').innerHTML =
-    g.configured?(g.connected?`Google Photos: connected · ${g.cached} cached
-    <button onclick="gpick()">Pick more photos</button>`:'<a href="/api/gphotos/connect"><button>Connect Google Photos</button></a>')
-    :'<a href="/api/gphotos/connect">Set up Google Photos</a>';
+  const srv=document.getElementById('srv');
+  if(!g.configured){ srv.innerHTML=wizardHTML(); }
+  else if(!g.connected){
+    srv.innerHTML=`<p><b>Connect Google Photos</b> to start your photo feed.</p>
+    <a href="/api/gphotos/connect"><button>Connect Google Photos</button></a>
+    <p><small>You'll approve access on Google's consent screen — one click,
+    no secrets to copy.</small></p>`;
+  }
+  else srv.innerHTML=`Google Photos: connected · ${g.cached} cached
+    <button onclick="gpick()">Pick more photos</button>`;
+}
+function wizardHTML(){
+  const cb=location.origin+'/api/gphotos/callback';
+  return `<h4>Set up Google Photos</h4>
+  <p>One-time setup — about two minutes. Google requires each server to have
+  its own app credentials; after this, everyone just clicks "Connect".</p>
+  <ol>
+    <li>Open <a href="https://console.cloud.google.com/apis/credentials"
+      target="_blank">Google Cloud → Credentials</a> (create a project if
+      asked), then <b>Create Credentials → OAuth client ID → Web
+      application</b>.</li>
+    <li>Under <b>Authorized redirect URIs</b> add:<br><code>${cb}</code></li>
+    <li>If Google shows an "unverified app" warning later, add your email
+      under <b>OAuth consent screen → Test users</b>.</li>
+    <li>Paste the client ID and secret below:</li>
+  </ol>
+  <input id="gcid" placeholder="Client ID" size="60"><br>
+  <input id="gsec" placeholder="Client secret" size="60" type="password"><br>
+  <button onclick="saveGphotos()">Save</button>
+  <p id="gwmsg"></p>`;
+}
+async function saveGphotos(){
+  const cid=document.getElementById('gcid').value.trim();
+  const sec=document.getElementById('gsec').value.trim();
+  const r=await api('POST','/api/gphotos/setup',
+    {client_id:cid, client_secret:sec});
+  document.getElementById('gwmsg').textContent =
+    r.ok?'Saved — now connect your Google Photos below.':('Error: '+r.error);
+  if(r.ok) init();
 }
 async function upload(e,id){
   e.preventDefault();

@@ -20,23 +20,31 @@ directly against Google's keys. Firebase is strictly opt-in
   - Authorized redirect URIs: `https://frame.example.com/api/gphotos/callback`
     (only needed if you use the Google Photos source)
 
-## Deploy via Portainer (no SSH needed)
+## Deploy via Portainer
 
-If Portainer is installed on your host:
+Two options — the web editor is simplest (no git credentials needed):
 
-1. Open Portainer (on your local network — its port is usually not exposed
-   remotely).
-2. **Stacks → Add stack** → name it `spectraframe`.
-3. Build method: **Repository** → URL
+**Option 1 — Web editor (recommended):**
+1. **Stacks → Add stack**, name it `spectraframe`.
+2. Build method: **Web editor** — paste the contents of
+   [`docker-compose.yml`](../docker-compose.yml).
+3. **Environment variables** → add `SPECTRA_CONFIG_JSON` with your full
+   config JSON (same keys as `server/config.json.example`: `public_url`,
+   `auth`, …).
+4. **Deploy the stack**.
+
+**Option 2 — Git repository:**
+1. **Stacks → Add stack** → **Repository** → URL
    `https://github.com/CJ8664/spectra-frame`, compose path
    `docker-compose.yml`. (Private repo: add your GitHub personal access
    token under Portainer's git credentials.)
-4. **Environment variables** → add one:
-   - name: `SPECTRA_CONFIG_JSON`
-   - value: your full config JSON (same keys as `config.json.example`:
-     `public_url`, `auth`, `google_photos`, …). This overrides the file
-     mount, so no config files to edit inside Portainer.
-5. **Deploy the stack**. Portainer builds the image and starts the container.
+2. Add the `SPECTRA_CONFIG_JSON` environment variable as above.
+3. **Deploy the stack**.
+
+If you see an OCI "mount ... not a directory" error about
+`server/config.json`: you're on an old compose file that bind-mounted the
+config file. Re-paste the current `docker-compose.yml` (no file mounts —
+config comes from the env var) and deploy again.
 
 ## Deploy via SSH
 
@@ -48,9 +56,11 @@ cp server/config.json.example server/config.json
 #   public_url  -> your public HTTPS URL
 #   auth.client_id -> your OAuth client ID
 #   auth.allowlist -> ["you@example.com"]  (empty = any Google account)
-#   google_photos.client_id / client_secret -> same OAuth client
-docker compose up -d --build
+SPECTRA_CONFIG_JSON="$(cat server/config.json)" docker compose up -d --build
 ```
+
+After login, Google Photos is set up from the console itself (setup wizard
+under the Google Photos section) — no Photos credentials in any config file.
 
 Open `https://frame.example.com/login`, sign in, pair the device with the
 claim code from its screen (`/claim`).

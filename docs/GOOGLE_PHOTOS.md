@@ -27,23 +27,22 @@ Google-hosted photo picker where you choose which photos the frame may use.
      (Publishing the app removes this step but requires verification.)
 4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
    - Application type: **Web application**
-   - Authorized redirect URIs: add
-     `http://localhost:8765/api/gphotos/callback`
-     (use your server's port if you changed it in `config.json`)
+   - Authorized redirect URIs: add `<your-public-url>/api/gphotos/callback`
+     (the wizard in the console shows the exact value for your install;
+     `http://localhost:8765/api/gphotos/callback` for local dev)
 5. Copy the **Client ID** and **Client secret**.
 
 ## Connect the server
 
-1. In `server/config.json`, add:
-   ```json
-   "google_photos": {
-     "client_id": "YOUR_ID.apps.googleusercontent.com",
-     "client_secret": "YOUR_SECRET"
-   }
-   ```
-2. Restart the server, open its web UI, and click **Connect Google Photos**.
-3. Approve the consent screen. The server stores tokens in
-   `server/.gphotos_token.json` (mode `0600`, gitignored).
+1. Sign into the web console and open the **Google Photos** section — a
+   setup wizard walks you through it: it shows the exact redirect URI to
+   register and takes the client ID + secret. They're stored server-side
+   (never in a config file, never shown again) and take effect immediately,
+   no restart.
+   - Manual fallback: put `"google_photos": {"client_id": "...",
+     "client_secret": "..."}` in `server/config.json` instead.
+2. Click **Connect Google Photos** and approve the consent screen. Tokens
+   are stored with mode `0600` (local file) or in Firestore (Firebase).
 4. Click **Pick more photos** → open the picker link → select photos → Done.
    The server polls, downloads originals into `server/data/gphotos/`, and
    the `google_photos` source rotates from that cache.
