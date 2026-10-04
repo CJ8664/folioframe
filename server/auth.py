@@ -1,17 +1,17 @@
-"""Human authentication: Google sign-in (bring-your-own OAuth client) + sessions.
+"""Human authentication: Google sign-in (server-held OAuth client) + sessions.
 
-Model: the admin deploys with ZERO OAuth configuration. Each user brings
-their own Google OAuth client ID -- created once in Google Cloud Console;
-the public welcome page (/) walks them through it. Sign-in verifies the
-Google ID token against the client ID the user supplied.
+Model: the admin configures ONE Google OAuth client for the service
+(config "google": {"client_id", "client_secret"} — one-time setup).
+Users just click "Sign in with Google"; they never see a client ID,
+secret, or the Cloud Console.
 
 Login flow (web console):
-  1. Welcome page (public): user enters their OAuth client ID.
-  2. Browser gets a Google ID token via GIS initialized with that client ID.
-  3. POST /api/auth/token {id_token, client_id} -> server verifies the
-     token cryptographically (signature, aud == client_id, iss, exp,
+  1. Welcome page (public): "Sign in with Google" button (GIS), initialized
+     with the server's client ID (served via /api/config).
+  2. POST /api/auth/token {id_token} -> server verifies the token
+     cryptographically (signature, aud == server client ID, iss, exp,
      email_verified) -- never trusts a decoded-but-unverified JWT.
-  4. Server get-or-creates the user record (keyed by Google `sub`) and
+  3. Server get-or-creates the user record (keyed by Google `sub`) and
      sets an httpOnly+Secure+SameSite=Lax session cookie.
 
 Everything beyond the welcome page requires a session.
@@ -20,7 +20,7 @@ The Google `sub` claim is the stable user key. Email allowlist (config
 "auth": {"allowlist": [...]}) optionally restricts who may sign in;
 empty/missing means anyone with a Google account may create an account --
 their data is isolated per user, so an open server leaks nothing across
-accounts. (This is not OAuth setup: just an email list.)
+accounts.
 """
 import hashlib
 import hmac
@@ -58,6 +58,10 @@ class AuthManager:
         self.store = store
         self.cfg = config.get("auth", {})
         self.allowlist = set(self.cfg.get("allowlist", []))
+        # The service's own Google OAuth client (admin-configured, one time).
+        # Sign-in verifies ID tokens against this client ID; users never
+        # supply one.
+        self.client_id = config.get("google", {}).get("client_id", "")
         self._verify = verify_fn or _default_verify
         self.secret = self._load_secret()
 
@@ -78,14 +82,15 @@ class AuthManager:
         return secret
 
     # ---- ID token verification -----------------------------------------
-    def verify_id_token(self, id_token_str, client_id):
+    def verify_id_token(self, id_token_str):
         """Verify and return (sub, email, name). Raises AuthError.
 
-        client_id is the *user's own* OAuth client (bring-your-own model):
-        aud must equal it. The server holds no OAuth client of its own.
+        The token's audience must equal the server's configured Google
+        OAuth client ID. The server holds no per-user OAuth state.
         """
+        client_id = self.client_id
         if not client_id or not CLIENT_ID_RE.fullmatch(client_id):
-            raise AuthError("a valid Google OAuth client ID is required")
+            raise AuthError("server Google sign-in is not configured")
         try:
             info = self._verify(id_token_str, client_id)
         except Exception as e:

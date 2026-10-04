@@ -31,7 +31,10 @@ from token_store import FileTokenStore
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
-PICKER_BASE = "https://photoslibrary.googleapis.com/v1"
+# The Picker API lives on its own host -- NOT photoslibrary.googleapis.com
+# (the restricted Library API). Using the wrong host makes every session
+# call fail; verified against the official Picker docs 2026-10-04.
+PICKER_BASE = "https://photospicker.googleapis.com/v1"
 SCOPE = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
 
 
@@ -74,6 +77,9 @@ class GoogleOAuth:
     def __init__(self, client_id="", client_secret="", redirect_uri="",
                  token_path="", http=_http, token_store=None,
                  client_provider=None):
+        # Credentials normally come straight from the server config
+        # (shared service OAuth client). client_provider remains as an
+        # escape hatch for tests that resolve credentials dynamically.
         if client_provider is not None:
             self._client_provider = client_provider
         else:
@@ -101,6 +107,9 @@ class GoogleOAuth:
             "scope": SCOPE,
             "access_type": "offline",   # get a refresh token
             "prompt": "consent",        # force refresh token re-issue
+            # Incremental authorization: sign-in happened earlier via GIS;
+            # keep any previously granted scopes on this grant.
+            "include_granted_scopes": "true",
             "state": state,
         })
         return AUTH_URL + "?" + q
@@ -338,20 +347,24 @@ class GooglePhotosSource(Source):
 class GPhotosController:
     """Owns OAuth + picker state + photo source for ONE user's account.
 
-    Bring-your-own-OAuth model: the client ID/secret belong to the user
-    (resolved per call via client_provider), tokens are stored per user,
-    and the photo cache is namespaced per user (blob prefix / cache dir).
-    The server holds no Photos credentials of its own.
+    Shared-service-OAuth model: the OAuth client ID/secret belong to the
+    service (admin-configured once); tokens are stored per user, and the
+    photo cache is namespaced per user (blob prefix / cache dir).
     """
 
     def __init__(self, port, http=_http, token_store=None,
                  blob_store=None, blob_prefix="gphotos/", cache_dir=None,
-                 public_url=None, client_provider=None,
+                 public_url=None, client_id="", client_secret="",
+                 client_provider=None,
                  store=None, states_key="gphotos_oauth_states"):
         self.redirect_uri = ((public_url.rstrip("/") if public_url
                               else f"http://localhost:{port}")
                              + "/api/gphotos/callback")
-        self._client_provider = client_provider or (lambda: ("", ""))
+        if client_provider is not None:
+            provider = client_provider
+        else:
+            provider = lambda: (client_id, client_secret)
+        self._client_provider = provider
         self.oauth = GoogleOAuth(
             redirect_uri=self.redirect_uri, token_path="", http=http,
             token_store=token_store, client_provider=self._client_provider)

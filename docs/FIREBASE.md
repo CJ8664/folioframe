@@ -6,9 +6,9 @@ Production topology:
   web console). Built from `Dockerfile` at repo root.
 - **Firebase Hosting**: `https://<project>.web.app` rewrites everything to
   Cloud Run (`firebase.json`).
-- **Sign-in**: direct Google ID-token verification (bring-your-own OAuth
-  client per user, via the welcome page). **No Firebase Authentication
-  setup needed** -- the admin configures zero OAuth.
+- **Sign-in**: direct Google ID-token verification against the service's
+  own OAuth client (admin-configured once in `SPECTRA_CONFIG_JSON`).
+  **No Firebase Authentication setup needed**.
 - **Firestore**: users, devices, sessions, rotation state, per-user Photos
   tokens (`firestore.rules` denies all direct client access — server only).
 - **Cloud Storage**: override frames/previews + per-user Google Photos cache

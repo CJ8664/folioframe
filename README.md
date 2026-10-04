@@ -55,12 +55,12 @@ unseen-first history, quiet hours, and ETag/304. Tests:
 
 ### Self-hosting
 
-The default configuration has **zero cloud dependencies and zero OAuth setup
-for the admin**: the registry is a local JSON file, photo blobs live on local
-disk, and each user signs in with Google using their **own** OAuth client ID
-(created once via the public welcome page; verified directly against Google's
-keys). Run it on any machine with Python 3.12+, or `docker build` the included
-`Dockerfile`. Firebase (Firestore, Cloud Storage, Cloud Run)
+The default configuration has **zero cloud dependencies**: the registry is
+a local JSON file, photo blobs live on local disk, and the admin configures
+one Google OAuth client once (`google.client_id` / `google.client_secret` in
+`SPECTRA_CONFIG_JSON`) — users then just click the normal Sign in with Google
+button. Run it on any machine with Python 3.12+, or `docker build` the
+included `Dockerfile`. Firebase (Firestore, Cloud Storage, Cloud Run)
 is strictly opt-in via `firebase.project_id` — see `docs/FIREBASE.md`.
 Without it, no Firebase package is even imported.
 

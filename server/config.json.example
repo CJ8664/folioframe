@@ -1,5 +1,9 @@
 {
-  "_note": "No OAuth anywhere in this file. The admin deploys; each user brings their own Google OAuth client via the welcome page (sign-in + Photos). auth.allowlist optionally restricts which Google accounts may sign in (empty = anyone; accounts are isolated per user).",
+  "_note": "Admin one-time setup: put the service's Google OAuth client under 'google' (Cloud Console -> your project -> APIs & Services -> Credentials -> your Web OAuth client). Users then just click 'Sign in with Google'; no one ever touches the Cloud Console. auth.allowlist optionally restricts which Google accounts may sign in (empty = anyone; accounts are isolated per user).",
+  "google": {
+    "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+    "client_secret": "YOUR_CLIENT_SECRET"
+  },
   "auth": {
     "allowlist": [
       "you@example.com"

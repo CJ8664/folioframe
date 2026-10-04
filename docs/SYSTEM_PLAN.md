@@ -328,10 +328,11 @@ starts, per the standing proof-checklist rule.
    Re-claiming transfers ownership: the old token is revoked atomically at
    claim time, so there is never a moment with two owners.
 3. **Scope:** single-user allowlist (Chirag) with multi-user-capable schema —
-   **superseded 2026-10-04 by the bring-your-own-OAuth decision:** the admin
-   configures zero OAuth; each user brings their own Google OAuth client via
-   the public welcome page. Accounts are per-user by construction (own client,
-   own Photos tokens/cache, own devices, own source). `auth.allowlist`
+   **superseded 2026-10-04 (v2.2) by the shared-service-OAuth decision:**
+   the admin configures ONE Google OAuth client once in `SPECTRA_CONFIG_JSON`;
+   every user signs in with the normal Sign in with Google button and
+   connects Photos with one click. Accounts are per-user by construction
+   (own Photos tokens/cache, own devices, own source). `auth.allowlist`
    remains as an optional email gate (empty = anyone may sign in; recommended:
    Chirag-only for his deployment).
 4. **Google Photos:** Picker-only for v1 — **confirmed** 2026-10-02.

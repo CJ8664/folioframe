@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from PIL import Image
 
 from sources.google_photos import (GoogleOAuth, PickerClient, PickFlow,
-                                   _parse_duration)
+                                   _parse_duration, PICKER_BASE)
 from sources.google_photos import GooglePhotosSource
 
 
@@ -124,6 +124,12 @@ class TestPickerClient(unittest.TestCase):
             self.assertIn("picker", s["pickerUri"])
             self.assertEqual(
                 http.auth_headers(), ["Bearer at"])
+
+    def test_picker_api_host(self):
+        # Regression: the Picker API lives on photospicker.googleapis.com,
+        # not the restricted Library API host. Using the wrong host made
+        # every "Pick photos" attempt fail server-side (2026-10-04).
+        self.assertEqual(PICKER_BASE, "https://photospicker.googleapis.com/v1")
 
     def test_list_pagination(self):
         with tempfile.TemporaryDirectory() as tmp:

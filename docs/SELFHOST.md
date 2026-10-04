@@ -56,15 +56,15 @@ cp server/config.json.example server/config.json
 #   public_url  -> your public HTTPS URL
 #   auth.allowlist -> ["you@example.com"]  (empty = any Google account;
 #                     NOT OAuth setup, just an email list)
-# No OAuth anywhere: the admin deploys, each user brings their own Google
-# OAuth client via the welcome page.
+#   google.client_id / google.client_secret -> the service's one OAuth
+#                     client (create once in Google Cloud Console)
 SPECTRA_CONFIG_JSON="$(cat server/config.json)" docker compose up -d --build
 ```
 
-Open the site: the public **welcome page** walks each user through creating
-their own Google OAuth client (~5 min, one time), then Google sign-in.
-After sign-in they get their account page: connect Google Photos, pair
-devices, push photos. The admin never touches OAuth.
+Open the site: the public **welcome page** has a normal Sign in with
+Google button. After sign-in users get their account page: connect Google
+Photos with one click, pair devices, push photos. Users never touch any
+Cloud Console or OAuth setup.
 
 Open `https://frame.example.com/login`, sign in, pair the device with the
 claim code from its screen (`/claim`).

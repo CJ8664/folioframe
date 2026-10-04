@@ -5,22 +5,20 @@ Implements PROTOCOL.md v2.1:
   Public:
     GET  /                              welcome page (or console if signed in)
     GET  /login                         -> redirects to /
-    POST /api/auth/token                {id_token, client_id} -> session
-  Human (signed-in session; Google sign-in with the user's OWN OAuth
-  client -- the admin configures no OAuth):
+    POST /api/auth/token                {id_token} -> session
+    GET  /api/config                    public client config (Google client ID)
+  Human (signed-in session; Google sign-in with the service's OAuth
+  client -- the admin configures it once in "google"):
     GET  /claim                         pair-a-device page
-    GET  /api/session, /api/account     session info + account (client id,
-                                        photo source, Photos state)
-    PATCH /api/account/client           rotate the account's OAuth client ID
+    GET  /api/session, /api/account     session info + account
     GET  /api/devices                   my devices
     POST /api/devices/claim             {code} claim a device to my account
     PATCH/DELETE /api/devices/{id}      rename / unpair (revokes token)
     POST /api/devices/{id}/photos/upload  multipart -> pinned override
     DELETE /api/devices/{id}/photos/override  clear override
     GET  /api/devices/{id}/preview      PNG of what the device shows
-    POST /api/gphotos/setup            {client_secret} (write-only)
-    GET  /api/gphotos/connect          -> Google consent (per-user client)
-    GET  /api/gphotos/callback         OAuth callback (per-user)
+    GET  /api/gphotos/connect          -> Google consent (service client)
+    GET  /api/gphotos/callback         OAuth callback (per-user tokens)
     GET  /api/gphotos/status           per-user Photos state
     POST /api/gphotos/pick             start a picker import (per user)
     POST /api/gphotos/disconnect        revoke per-user Photos tokens
@@ -35,10 +33,12 @@ Implements PROTOCOL.md v2.1:
     GET  /v1/device/ota/version, /v1/device/ota/firmware.bin
 
 Security: no anonymous access to any frame, photo, or device control.
-The welcome page is the only public page. Each user's Photos credentials,
-tokens, and photo cache are isolated per user.
-Config: server/config.json (created with defaults on first run) -- holds
-NO OAuth credentials; the admin only sets port/public_url/source defaults.
+The welcome page is the only public page. Each user's Photos tokens and
+photo cache are isolated per user; the OAuth client itself belongs to the
+service (admin-configured once).
+Config: server/config.json (created with defaults on first run), or
+SPECTRA_CONFIG_JSON env (Portainer). The admin sets the Google OAuth
+client once under "google"; auth.allowlist optionally gates sign-in.
 State: server/data/registry.json (users/devices/sessions, 0600).
 """
 import http.server
@@ -60,7 +60,7 @@ import sources.dashboard  # noqa: F401
 import sources.google_photos  # noqa: F401
 from sources import SOURCES
 from sources.google_photos import (GPhotosController, PickerClient, PickFlow)
-from auth import AuthManager, AuthError, SESSION_COOKIE, CLIENT_ID_RE
+from auth import AuthManager, AuthError, SESSION_COOKIE
 from devices import DeviceRegistry, AlreadyPaired, BadClaim, RateLimiter
 from store import JsonStore, FirestoreStore
 from blobs import LocalBlobStore, GCSBlobStore
@@ -87,6 +87,11 @@ DEFAULT_CONFIG = {
     "dashboard": {"lat": 36.17, "lon": -115.14,
                   "timezone": "America/Los_Angeles"},
     "auth": {"allowlist": []},
+    # The service's Google OAuth client (admin one-time setup): used for
+    # "Sign in with Google" and for Google Photos. Users never see these
+    # values. Get them from Google Cloud Console -> your project ->
+    # APIs & Services -> Credentials -> your Web OAuth client.
+    "google": {"client_id": "", "client_secret": ""},
 }
 
 
@@ -120,9 +125,10 @@ class Server:
         env_cfg = os.environ.get("SPECTRA_CONFIG_JSON")
         if env_cfg:
             self.cfg.update(json.loads(env_cfg))
-        # NOTE: the admin configures NO OAuth here. Each user brings their
-        # own Google OAuth client (welcome page); auth.allowlist optionally
-        # restricts which Google accounts may sign in (empty = anyone).
+        # NOTE: the admin configures the service's Google OAuth client once
+        # under "google" (client_id + client_secret). auth.allowlist
+        # optionally restricts which Google accounts may sign in
+        # (empty = anyone; accounts are isolated per user).
 
         # ---- Firebase mode ------------------------------------------------
         # Enabled when config has firebase.project_id. On Cloud Run this
@@ -177,22 +183,21 @@ class Server:
     def _put_user(self, sub, user):
         self.store.put("users", sub, user)
 
-    def _user_client(self, sub):
-        """(oauth_client_id, photos_client_secret) for a user.
+    def _google_creds(self):
+        """The service's Google OAuth client (admin-configured, once)."""
+        g = self.cfg.get("google", {})
+        return (g.get("client_id", ""), g.get("client_secret", ""))
 
-        Read fresh from the store on every call so client rotation takes
-        effect without a restart. The secret is never returned by any API.
-        """
-        user = self._get_user(sub)
-        return (user.get("oauth_client_id", ""),
-                user.get("photos_client_secret", ""))
+    def google_configured(self):
+        cid, csec = self._google_creds()
+        return bool(cid and csec)
 
     def photos_for(self, sub):
-        """Per-user Google Photos controller (bring-your-own OAuth).
+        """Per-user Google Photos controller (shared service OAuth client).
 
-        Tokens are stored per user, the photo cache is namespaced per user
-        (blob prefix / cache dir). The server holds no Photos credentials
-        of its own.
+        The OAuth client ID/secret belong to the service; tokens are stored
+        per user and the photo cache is namespaced per user (blob prefix /
+        cache dir).
         """
         ctrl = self._photos.get(sub)
         if ctrl is None:
@@ -204,7 +209,9 @@ class Server:
                 cache_dir=os.path.join(self.data_dir, "users", sub,
                                        "gphotos"),
                 public_url=self.public_url or None,
-                client_provider=lambda s=sub: self._user_client(s),
+                # Resolved per call so config changes take effect
+                # without a restart.
+                client_provider=lambda: self._google_creds(),
                 store=self.store,
                 states_key=f"gphotos_oauth_states:{sub}",
             )
@@ -249,8 +256,8 @@ class Server:
     def gphotos_pick(self, sub):
         """Create a picker session and import in the background (per user)."""
         gp = self.photos_for(sub)
-        if not gp.configured:
-            raise RuntimeError("save your OAuth client secret first")
+        if not self.google_configured():
+            raise RuntimeError("Google Photos isn't set up on this server yet")
         if not gp.oauth.connected:
             raise RuntimeError("Google Photos not connected")
         client = PickerClient(gp.oauth)
@@ -536,10 +543,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         p = urllib.parse.urlparse(self.path).path
 
         if p == "/api/config":
-            # Public client config. The Firebase web API key is designed to
-            # be public (security comes from Auth + Firestore rules, both
-            # server-enforced); nothing secret is exposed here.
-            self._json(200, {"firebase": APP.firebase_cfg.get("web", {})})
+            # Public client config. The Google OAuth client ID is designed
+            # to be public (it appears in the page's JavaScript); the client
+            # secret is never exposed here.
+            self._json(200, {"firebase": APP.firebase_cfg.get("web", {}),
+                             "google_client_id": APP.auth.client_id})
             return
 
         if p == "/login":
@@ -555,12 +563,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if p == "/":
-            # The only public page: a welcome page describing the steps.
+            # The only public page: a welcome page with sign-in.
             # Signed-in users get their console (account page) instead.
             if not self._human()[1]:
-                legacy = APP.cfg.get("auth", {}).get("client_id", "")
-                self._send(200, "text/html",
-                            WELCOME_HTML(legacy).encode())
+                self._send(200, "text/html", WELCOME_HTML().encode())
                 return
             self._send(200, "text/html", CONSOLE_HTML.encode())
             return
@@ -586,11 +592,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "ok": True,
                 "email": user.get("email", ""),
                 "name": user.get("name", ""),
-                "client_id": user.get("oauth_client_id", ""),
                 "source": APP._user_source_name(sub),
                 "sources": sorted(SOURCES),
-                "photos_secret_saved": bool(
-                    user.get("photos_client_secret")),
                 "photos_connected": gp.oauth.connected,
                 "photos_cached": gp.cache_count(),
             })
@@ -680,11 +683,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             _, _, sub = got
             gp = APP.photos_for(sub)
-            if not gp.configured:
+            if not APP.google_configured():
                 self._json(400, {
                     "ok": False,
-                    "error": "save your OAuth client secret on your "
-                             "account page first"})
+                    "error": "Google Photos isn't set up on this server "
+                             "yet (the admin needs to add the Google "
+                             "OAuth client first)"})
                 return
             q = urllib.parse.parse_qs(
                 urllib.parse.urlparse(self.path).query)
@@ -727,12 +731,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             _, _, sub = got
             gp = APP.photos_for(sub)
-            user = APP._get_user(sub)
             ps = gp.pick_state or {}
-            # The client secret is write-only: never exposed here.
             self._json(200, {
-                "client_id": user.get("oauth_client_id", ""),
-                "secret_saved": bool(user.get("photos_client_secret")),
                 "connected": gp.oauth.connected,
                 "cached": gp.cache_count(),
                 "picking": ps.get("status") == "waiting",
@@ -755,38 +755,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if data is None:
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
-            # Bring-your-own-OAuth: the client ID belongs to the user, taken
-            # from the welcome page. The server holds no OAuth client.
-            # (No rate limit here: Google ID tokens can't be brute-forced --
-            # forging one requires Google's signing keys -- and the endpoint
-            # is no more expensive than the other public routes. The
-            # guessable claim codes stay rate-limited.)
-            client_id = (data.get("client_id") or "").strip()
+            # The Google ID token is verified against the service's own
+            # OAuth client (admin-configured). No rate limit here: Google
+            # ID tokens can't be brute-forced -- forging one requires
+            # Google's signing keys -- and the endpoint is no more
+            # expensive than the other public routes. The guessable claim
+            # codes stay rate-limited.
             try:
                 sub, email, name = APP.auth.verify_id_token(
-                    data.get("id_token", ""), client_id)
+                    data.get("id_token", ""))
             except AuthError as e:
                 self._json(401, {"ok": False, "error": str(e)})
                 return
             user = APP.store.get("users", sub) or {}
-            if user.get("oauth_client_id") \
-                    and user["oauth_client_id"] != client_id:
-                self._json(401, {
-                    "ok": False,
-                    "error": "this account uses a different OAuth client -- "
-                             "update it from your account page, then sign "
-                             "in again"})
-                return
-            if not user.get("oauth_client_id"):
-                user["oauth_client_id"] = client_id
-                # One-time migration from the retired global setup wizard:
-                # adopt its client into the account that signs in with it.
-                legacy = APP.store.get("_service", "gphotos_client") or {}
-                if legacy.get("client_id") == client_id \
-                        and legacy.get("client_secret"):
-                    user["photos_client_secret"] = legacy["client_secret"]
-                if legacy:
-                    APP.store.delete("_service", "gphotos_client")
             user.update({"email": email, "name": name,
                          "last_login": int(time.time())})
             APP.store.put("users", sub, user)
@@ -912,29 +893,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                      "next wake"})
             return
 
-        if p == "/api/gphotos/setup":
-            # Save the user's Photos OAuth client secret. The client ID is
-            # already on their account (from sign-in); one client does both.
-            # The secret is write-only: no endpoint ever returns it.
-            got = self._require_human()
-            if not got or not self._require_csrf(got[1]):
-                return
-            _, _, sub = got
-            data = self._read_json()
-            if data is None:
-                self._json(400, {"ok": False, "error": "bad json"})
-                return
-            secret = (data.get("client_secret") or "").strip()
-            if not secret:
-                self._json(400, {"ok": False,
-                                 "error": "client_secret is required"})
-                return
-            user = APP._get_user(sub)
-            user["photos_client_secret"] = secret
-            APP._put_user(sub, user)
-            self._json(200, {"ok": True})
-            return
-
         if p == "/api/gphotos/pick":
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
@@ -988,29 +946,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # ---- PATCH / DELETE ------------------------------------------------
     def do_PATCH(self):
         p = urllib.parse.urlparse(self.path).path
-        if p == "/api/account/client":
-            # Rotate the account's OAuth client ID (e.g. after creating a
-            # new client). Takes effect on next sign-in; Photos keeps
-            # working once the new client's secret is saved.
-            got = self._require_human()
-            if not got or not self._require_csrf(got[1]):
-                return
-            _, _, sub = got
-            data = self._read_json()
-            if data is None:
-                self._json(400, {"ok": False, "error": "bad json"})
-                return
-            cid = (data.get("client_id") or "").strip()
-            if not CLIENT_ID_RE.fullmatch(cid):
-                self._json(400, {"ok": False,
-                                 "error": "not a valid Google OAuth "
-                                          "client ID"})
-                return
-            user = APP._get_user(sub)
-            user["oauth_client_id"] = cid
-            APP._put_user(sub, user)
-            self._json(200, {"ok": True})
-            return
         dev_id, rest = self._device_id_from_path("/api/devices/")
         if dev_id and not rest:
             got = self._require_human()
@@ -1066,206 +1001,314 @@ class Handler(http.server.BaseHTTPRequestHandler):
 # Console HTML
 # --------------------------------------------------------------------------
 
-def WELCOME_HTML(legacy_client_id=""):
+def WELCOME_HTML():
     """Public welcome page: the only unauthenticated page.
 
-    Describes the steps; the user enters their OWN Google OAuth client ID
-    (bring-your-own model -- the admin configures no OAuth), then signs in
-    with Google. Everything beyond this page requires the session.
+    Friendly sign-in only -- no setup steps, no jargon. The server's
+    Google OAuth client ID comes from /api/config; GIS renders the
+    official button.
     """
-    prefill = legacy_client_id if CLIENT_ID_RE.fullmatch(
-        legacy_client_id or "") else ""
-    return f"""<html><head><meta name='viewport'
+    return """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1'><title>SpectraFrame</title>
-</head><body style='font-family:sans-serif;max-width:640px;margin:40px auto'>
-<h2>SpectraFrame</h2>
-<p>Your photos, on e-ink. This server belongs to whoever deployed it --
-there is no central account system. You bring your own Google credentials;
-nothing here is shared with anyone else.</p>
-<h3>Get started (one time, about 5 minutes)</h3>
-<ol>
-<li>Create a <a href='https://console.cloud.google.com/'
-target='_blank'>Google Cloud project</a> (any name).</li>
-<li><b>APIs &amp; Services &rarr; OAuth consent screen</b>: choose
-<b>External</b>, fill in the app name and your email. Under
-<b>Test users</b>, add your Google account.</li>
-<li><b>APIs &amp; Services &rarr; Credentials &rarr; Create Credentials
-&rarr; OAuth client ID</b>: application type <b>Web application</b>.
-Under <b>Authorized redirect URIs</b> add exactly:<br>
-<code id='cburi'></code></li>
-<li>Copy the <b>Client ID</b> and paste it below. One client does
-everything: sign-in now, Google Photos later.</li>
-</ol>
-<input id='cid' placeholder='xxxx.apps.googleusercontent.com' size='50'
- value='{prefill}'>
-<button onclick='cont()'>Continue</button>
-<p id='err' style='color:red'></p>
-<div id='signin' style='display:none'>
-<p>Now sign in with the Google account you added as a test user:</p>
+<link rel='preconnect' href='https://fonts.googleapis.com'>
+<link href='https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap' rel='stylesheet'>
+<style>
+:root{--paper:#F7F5F0;--card:#FDFCF9;--hairline:#E4E1D8;--ink:#1F1B16;
+--muted:#6E665C;--accent:#B3541E;--accent-dark:#8F3F14;--err:#A33327;}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);
+font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+margin:0;padding:56px 20px;line-height:1.6;}
+.wrap{max-width:620px;margin:0 auto}
+.kicker{font-size:12px;letter-spacing:3px;font-weight:600;color:var(--accent);
+text-transform:uppercase;margin:0 0 14px}
+h1{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:42px;
+line-height:1.12;margin:0 0 16px}
+.sub{font-size:18px;color:var(--muted);margin:0 0 30px}
+.card{background:var(--card);border:1px solid var(--hairline);
+border-radius:18px;padding:30px;margin:0}
+.benefits{list-style:none;padding:0;margin:0 0 10px}
+.benefits li{padding:10px 0 10px 36px;position:relative;font-size:16px}
+.benefits li::before{content:'\\2713';position:absolute;left:6px;
+color:var(--accent);font-weight:700}
+#gbtn{display:flex;justify-content:center;margin:10px 0;min-height:48px}
+#err{color:var(--err);min-height:1.5em;font-size:14px;text-align:center;margin:8px 0}
+.fine{font-size:13px;color:var(--muted);text-align:center;margin:10px 0 0}
+</style>
 <script src='https://accounts.google.com/gsi/client' async defer></script>
+</head><body><div class='wrap'>
+<p class='kicker'>SpectraFrame</p>
+<h1>Your memories,<br>on paper-like e-ink.</h1>
+<p class='sub'>SpectraFrame turns the photos you love into a calm,
+always-on gallery for your home.</p>
+<div class='card'>
+<ul class='benefits'>
+<li><b>You choose the photos</b> — pick from Google Photos whenever you like.</li>
+<li><b>Your frame does the rest</b> — it shows them on its own, no phone needed.</li>
+<li><b>Private by design</b> — read-only access; disconnect anytime.</li>
+</ul>
 <div id='gbtn'></div>
-<p><small>Trouble? Google sign-in needs this page served over HTTPS
-(or opened via <code>localhost</code>).</small></p>
+<p id='err'></p>
+<p class='fine'>Takes about 30 seconds. We never see your Google password.<br>
+<span id='https-note' style='display:none'>Heads up: Google sign-in needs this
+page over HTTPS (or <code>localhost</code>).</span></p>
+</div>
 </div>
 <script>
-document.getElementById('cburi').textContent =
-  location.origin + '/api/gphotos/callback';
-function cont(){{
-  const cid = document.getElementById('cid').value.trim();
-  if(!/^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$/.test(cid)){{
-    document.getElementById('err').textContent =
-      "That doesn't look like a Google OAuth client ID.";
-    return;
-  }}
-  document.getElementById('err').textContent = '';
-  document.getElementById('signin').style.display = 'block';
-  window._cid = cid;
-  google.accounts.id.initialize({{client_id: cid, callback: onGoogle}});
+function showError(m){document.getElementById('err').textContent=m;}
+function onGoogle(r){
+  fetch('/api/auth/token',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id_token:r.credential})})
+  .then(r=>r.json()).then(j=>{
+    if(j.ok) location.href='/';
+    else showError(j.error||'Sign-in failed. Please try again.');
+  }).catch(()=>showError('Could not reach the server. Please try again.'));
+}
+function initGis(cid){
+  if(!(window.google&&google.accounts&&google.accounts.id)){
+    setTimeout(()=>initGis(cid),200);return;
+  }
+  if(location.protocol!=='https:'&&location.hostname!=='localhost'
+     &&location.hostname!=='127.0.0.1')
+    document.getElementById('https-note').style.display='inline';
+  google.accounts.id.initialize({client_id:cid,callback:onGoogle});
   google.accounts.id.renderButton(document.getElementById('gbtn'),
-    {{type: 'standard'}});
-}}
-function onGoogle(r){{
-  fetch('/api/auth/token', {{method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{id_token: r.credential,
-                          client_id: window._cid}})}})
-  .then(r => r.json()).then(j => {{
-    if(j.ok) location.href = '/';
-    else document.getElementById('err').textContent = j.error;
-  }});
-}}
+    {type:'standard',theme:'outline',size:'large',width:280});
+}
+window.addEventListener('load',()=>{
+  fetch('/api/config').then(r=>r.json()).then(c=>{
+    const cid=c.google_client_id||'';
+    if(!cid){showError('This server is not set up yet.');return;}
+    initGis(cid);
+  }).catch(()=>showError('Could not reach the server. Please try again.'));
+});
 </script></body></html>"""
 
 
 CONSOLE_HTML = """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1'><title>SpectraFrame</title>
-</head><body style='font-family:sans-serif;max-width:640px;margin:20px auto'>
-<h2>SpectraFrame console</h2>
-<p><span id='who'></span> · <a href='/claim'>Pair a device</a> ·
-<button onclick='logout()'>Sign out</button></p>
-<div id='acct'></div>
-<div id='devices'>loading…</div>
-<h3>Photo source</h3>
-<div id='src'></div>
-<h3>Google Photos</h3>
-<div id='photos'></div>
+<link rel='preconnect' href='https://fonts.googleapis.com'>
+<link href='https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap' rel='stylesheet'>
+<style>
+:root{--paper:#F7F5F0;--card:#FDFCF9;--hairline:#E4E1D8;--ink:#1F1B16;
+--muted:#6E665C;--accent:#B3541E;--accent-dark:#8F3F14;--ok:#2E7D4F;--err:#A33327;}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);
+font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+margin:0;padding:32px 20px 72px;line-height:1.6;}
+.wrap{max-width:680px;margin:0 auto}
+.top{display:flex;align-items:center;justify-content:space-between;
+margin-bottom:26px;flex-wrap:wrap;gap:8px}
+.brand{font-family:'Fraunces',Georgia,serif;font-size:26px;font-weight:600}
+.top .who{font-size:14px;color:var(--muted)}
+.top a,.top button.link{font-size:14px;color:var(--accent);text-decoration:none;
+background:none;border:0;cursor:pointer;font-family:inherit;padding:0}
+.top a:hover,.top button.link:hover{text-decoration:underline}
+.card{background:var(--card);border:1px solid var(--hairline);
+border-radius:18px;padding:26px;margin:0 0 20px}
+.card h3{font-family:'Fraunces',Georgia,serif;font-size:22px;margin:0 0 6px;font-weight:600}
+.card p{margin:8px 0}
+.muted{color:var(--muted);font-size:14px}
+.btn{display:inline-block;background:var(--accent);color:#fff;border:0;
+border-radius:999px;padding:12px 26px;font-size:15px;font-weight:600;
+cursor:pointer;font-family:inherit;text-decoration:none}
+.btn:hover{background:var(--accent-dark)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--hairline)}
+.btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.sm{padding:8px 18px;font-size:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.msg{font-size:14px;min-height:1.4em;margin:10px 0 0}
+.msg.err{color:var(--err)}.msg.ok{color:var(--ok)}
+.reassure{list-style:none;padding:0;margin:14px 0}
+.reassure li{padding:6px 0 6px 32px;position:relative;font-size:15px}
+.reassure li::before{content:'\\2713';position:absolute;left:8px;
+color:var(--ok);font-weight:700}
+.dev{border:1px solid var(--hairline);border-radius:14px;padding:18px;margin:14px 0}
+.dev img{border-radius:10px;border:1px solid var(--hairline);margin:10px 0;
+max-width:100%;display:block}
+.dev .meta{font-size:13px;color:var(--muted)}
+.srcbtn{margin:0 8px 8px 0}
+input[type=text],input[type=file]{font:inherit}
+input[type=text]{padding:10px 14px;border:1px solid var(--hairline);
+border-radius:12px;background:#fff;width:100%;max-width:320px}
+</style></head><body><div class='wrap'>
+<div class='top'>
+<div><span class='brand'>SpectraFrame</span></div>
+<div><span class='who' id='who'></span> &nbsp;·&nbsp;
+<a href='/claim'>Pair a frame</a> &nbsp;·&nbsp;
+<button class='link' onclick='logout()'>Sign out</button></div>
+</div>
+<div class='card'><h3 id='hello'>Welcome</h3>
+<p class='muted'>This is your space — only you can see what's here.</p></div>
+<div class='card'><h3>Google Photos</h3><div id='photos'>
+<p class='muted'>Loading…</p></div></div>
+<div class='card'><h3>What to show</h3><div id='src'></div>
+<p class='muted'>Your frames follow this choice.</p></div>
+<div class='card'><h3>Frames</h3><div id='devices'>
+<p class='muted'>Loading…</p></div></div>
 <script>
 let CSRF='';
+const SRC_NAMES={dashboard:'Daily dashboard',folder:'Photo folder',
+google_photos:'Google Photos',picsum:'Sample photos',url:'Web image'};
+function srcName(n){return SRC_NAMES[n]||n;}
 async function api(m,u,b,form){
   const o={method:m,headers:{'X-CSRF-Token':CSRF}};
-  if(form){o.body=b;} else if(b){o.headers['Content-Type']='application/json';o.body=JSON.stringify(b);}
-  const r=await fetch(u,o); return r.json().catch(()=>({}));
+  if(form){o.body=b;}
+  else if(b){o.headers['Content-Type']='application/json';o.body=JSON.stringify(b);}
+  const r=await fetch(u,o);return r.json().catch(()=>({ok:false,error:'Server unreachable'}));
 }
+function esc(s){return String(s??'').replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function init(){
   const s=await (await fetch('/api/session')).json();
   if(!s.ok){location.href='/';return;}
   CSRF=s.csrf;
   const a=await (await fetch('/api/account')).json();
-  document.getElementById('who').textContent=a.email;
-  document.getElementById('acct').innerHTML=
-    `<div style='border:1px solid #ccc;padding:12px;margin:12px 0'>
-     <b>Account</b><br>Email: ${a.email}<br>
-     OAuth client: <code>${a.client_id}</code>
-     <button onclick='updClient()'>Update client ID</button><br>
-     <small>Your own Google OAuth client — sign-in and Photos both use it.
-     Only you can see this page's data.</small></div>`;
-  const d=await (await fetch('/api/devices')).json();
-  const el=document.getElementById('devices');
-  if(!d.devices.length){el.innerHTML='<p>No devices yet. <a href="/claim">Pair one</a> — the code is on its screen.</p>';}
-  else el.innerHTML='<h3>My devices</h3>'+d.devices.map(dev=>`
-    <div style='border:1px solid #ccc;padding:12px;margin:12px 0'>
-      <b>${dev.name}</b> <small>${dev.device_id}</small><br>
-      <small>last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
-      · battery: ${dev.battery_pct??'—'}% · fw: ${dev.fw??'—'}</small><br>
-      ${dev.override?'<b>pinned photo active</b> <button onclick="clearOv(\\''+dev.device_id+'\\')">clear</button><br>':''}
-      <img src='/api/devices/${dev.device_id}/preview' width='200'><br>
-      <form onsubmit='return upload(event,"${dev.device_id}")'>
-        <input type='file' name='photo' accept='image/*' required>
-        <button>Push photo to device</button>
-      </form><small>Push pins the photo immediately; the device shows it at its next wake.</small><br>
-      <button onclick='renameDev("${dev.device_id}")'>Rename</button>
-      <button onclick='unpair("${dev.device_id}")'>Unpair</button>
-    </div>`).join('');
-  document.getElementById('src').innerHTML=
-    a.sources.map(n=>`<button ${n===a.source?'disabled':''}
-      onclick="setSrc('${n}')">${n}</button>`).join(' ')+
-    ` <button onclick='nextFrame()'>Next photo</button>`;
+  document.getElementById('who').textContent=a.email||'';
+  document.getElementById('hello').textContent=
+    'Welcome'+(a.name?', '+a.name:'');
+  renderDevices();renderSources(a);renderPhotos();
+}
+/* ---------- Google Photos ---------- */
+async function renderPhotos(){
   const g=await (await fetch('/api/gphotos/status')).json();
-  const ph=document.getElementById('photos');
-  if(!g.secret_saved){
-    ph.innerHTML=`<p>Your sign-in client: <code>${g.client_id}</code></p>
-    <p>To enable Google Photos, paste this client's <b>client secret</b>
-    (Google Cloud &rarr; Credentials &rarr; click your client):</p>
-    <input id='gsec' type='password' size='50' placeholder='Client secret'>
-    <button onclick='saveSecret()'>Save secret</button><p id='secmsg'></p>
-    <p><small>Stored on this server only, never shown again. You can
-    disconnect any time.</small></p>`;
-  } else if(!g.connected){
-    ph.innerHTML=`<p>Client secret saved.</p>
-    <a href='/api/gphotos/connect?origin=${encodeURIComponent(location.origin)}'>
-    <button>Connect Google Photos</button></a>
-    <p><small>You'll approve access on Google's consent screen — one click,
-    no secrets to copy.</small></p>`;
-  } else {
-    ph.innerHTML=`Connected · ${g.cached} cached
-    <button onclick='gpick()'>Pick more photos</button>
-    <button onclick='gdisc()'>Disconnect</button>`;
-    if(g.picking) ph.innerHTML+=`<br><small>Picker open:
-      <a href='${g.picker_uri}' target='_blank'>continue picking</a></small>`;
+  const el=document.getElementById('photos');
+  if(!g.connected){
+    el.innerHTML=`
+      <p>Show the photos you love, straight from your library.</p>
+      <ul class='reassure'>
+        <li><b>Read-only</b> — we never change, move, or delete your photos.</li>
+        <li><b>You choose</b> — you pick exactly which photos we can see.</li>
+        <li><b>Undo anytime</b> — disconnect in one tap.</li>
+      </ul>
+      <div class='row'>
+        <a class='btn' href='/api/gphotos/connect?origin=${encodeURIComponent(location.origin)}'>Connect Google Photos</a>
+      </div>
+      <p class='muted'>You will approve access on Google's own screen — nothing to copy or paste.</p>
+      <p class='msg' id='photos-msg'></p>`;
+  }else{
+    let st='';
+    if(g.picking)
+      st=`<p>Picker open — <a href='${g.picker_uri}' target='_blank'>continue choosing photos</a>, then come back here.</p>`;
+    else if(g.pick_status==='error')
+      st=`<p class='msg err'>Couldn't finish picking: ${esc(g.pick_error)} Please try again.</p>`;
+    el.innerHTML=`
+      <p><b>Connected \\u2713</b> · ${g.cached} photo${g.cached==1?'':'s'} ready for your frame</p>
+      ${st}
+      <div class='row'>
+        <button class='btn' onclick='gpick()'>Pick more photos</button>
+        <button class='btn ghost' onclick='gdisc()'>Disconnect</button>
+      </div>
+      <p class='msg' id='photos-msg'></p>`;
+    if(g.picking) pollPick();
   }
 }
-async function updClient(){
-  const cid=prompt('New OAuth client ID (xxxx.apps.googleusercontent.com):');
-  if(!cid) return;
-  const r=await api('PATCH','/api/account/client',{client_id:cid.trim()});
-  alert(r.ok?'Saved — sign out and sign back in with the new client.':'Error: '+r.error);
-  if(r.ok) init();
+async function gpick(){
+  const msg=document.getElementById('photos-msg');
+  msg.className='msg';msg.textContent='Opening the photo picker…';
+  const r=await api('POST','/api/gphotos/pick');
+  if(r.ok&&r.picker_uri){open(r.picker_uri,'_blank');renderPhotos();}
+  else{msg.className='msg err';
+    msg.textContent="Couldn't open the picker: "+(r.error||'unknown error')+'. Please try again.';}
+}
+async function pollPick(){
+  for(let i=0;i<48;i++){
+    await new Promise(r=>setTimeout(r,5000));
+    const g=await (await fetch('/api/gphotos/status')).json();
+    if(!g.picking){renderPhotos();return;}
+  }
+  renderPhotos();
+}
+async function gdisc(){
+  if(!confirm('Disconnect Google Photos? Your chosen photos stay on this server until you pick again.'))return;
+  await api('POST','/api/gphotos/disconnect');renderPhotos();
+}
+/* ---------- sources ---------- */
+async function renderSources(a){
+  document.getElementById('src').innerHTML=
+    a.sources.map(n=>`<button class='btn ${n===a.source?'':'ghost'} sm srcbtn'
+      ${n===a.source?'disabled':''}
+      onclick="setSrc('${n}')">${srcName(n)}</button>`).join('')+
+    ` <button class='btn ghost sm' onclick='nextFrame()'>Show next photo now</button>
+       <p class='msg' id='src-msg'></p>`;
 }
 async function setSrc(n){
   const r=await api('POST','/api/source',{name:n});
-  if(!r.ok) alert('Error: '+r.error); init();
+  const m=document.getElementById('src-msg');
+  if(!r.ok){m.className='msg err';m.textContent='Could not switch: '+(r.error||'unknown error');return;}
+  init();
 }
 async function nextFrame(){
   const r=await api('POST','/api/next');
-  if(!r.ok) alert('Error: '+r.error); init();
+  const m=document.getElementById('src-msg');
+  m.className='msg '+(r.ok?'ok':'err');
+  m.textContent=r.ok?'Rotating now — your frames update at their next wake.':'Could not rotate: '+(r.error||'unknown error');
 }
-async function saveSecret(){
-  const sec=document.getElementById('gsec').value.trim();
-  const r=await api('POST','/api/gphotos/setup',{client_secret:sec});
-  document.getElementById('secmsg').textContent=
-    r.ok?'Saved — now connect below.':('Error: '+r.error);
-  if(r.ok) init();
+/* ---------- devices ---------- */
+async function renderDevices(){
+  const d=await (await fetch('/api/devices')).json();
+  const el=document.getElementById('devices');
+  if(!d.devices.length){
+    el.innerHTML=`<p><b>No frames paired yet.</b></p>
+    <p class='muted'>When your frame arrives, choose <b>Pair a frame</b> above and
+    enter the code shown on its screen.</p>
+    <div class='row'><a class='btn' href='/claim'>Pair a frame</a></div>`;
+    return;
+  }
+  el.innerHTML=d.devices.map(dev=>`
+    <div class='dev'>
+      <b>${esc(dev.name||'Frame')}</b>
+      <span class='meta'>${esc(dev.device_id)}</span><br>
+      <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
+      · Battery: ${dev.battery_pct??'—'}% · Firmware: ${esc(dev.fw??'—')}</span><br>
+      ${dev.override?'<p><b>📌 Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
+      <img src='/api/devices/${dev.device_id}/preview' width='320' alt='Current frame photo'><br>
+      <form onsubmit='return upload(event,"${dev.device_id}")'>
+        <input type='file' name='photo' accept='image/*' required>
+        <button class='btn sm'>Push photo to frame</button>
+      </form>
+      <p class='muted'>Pushing pins the photo immediately; the frame shows it at its next wake.</p>
+      <div class='row'>
+        <button class='btn ghost sm' onclick='renameDev("${dev.device_id}")'>Rename</button>
+        <button class='btn ghost sm' onclick='unpair("${dev.device_id}")'>Unpair</button>
+      </div>
+    </div>`).join('')+`<p class='msg' id='dev-msg'></p>`;
 }
-async function gdisc(){
-  if(!confirm('Disconnect Google Photos? Cached photos stay until you pick again.'))return;
-  await api('POST','/api/gphotos/disconnect'); init();
+function devMsg(msg,isErr){
+  const m=document.getElementById('dev-msg');if(!m)return;
+  m.className='msg '+(isErr?'err':'ok');m.textContent=msg;
 }
 async function upload(e,id){
   e.preventDefault();
-  const fd=new FormData(e.target);
-  const r=await api('POST','/api/devices/'+id+'/photos/upload',fd,true);
-  alert(r.ok?'Pushed — shows on the device at its next wake.':('Error: '+r.error));
-  init(); return false;
+  const r=await api('POST','/api/devices/'+id+'/photos/upload',new FormData(e.target),true);
+  devMsg(r.ok?'Pushed — shows on the frame at its next wake.':'Push failed: '+(r.error||'unknown error'),!r.ok);
+  init();return false;
 }
 async function clearOv(id){
   if(!confirm('Clear the pinned photo and resume the normal source?'))return;
-  await api('DELETE','/api/devices/'+id+'/photos/override'); init();
+  const r=await api('DELETE','/api/devices/'+id+'/photos/override');
+  devMsg(r.ok?'Pinned photo cleared.':'Could not clear: '+(r.error||'unknown error'),!r.ok);
+  init();
 }
 async function unpair(id){
-  if(!confirm('Unpair this device? Its token is revoked immediately.'))return;
-  await api('DELETE','/api/devices/'+id); init();
+  if(!confirm('Unpair this frame? Its access is revoked immediately.'))return;
+  const r=await api('DELETE','/api/devices/'+id);
+  devMsg(r.ok?'Frame unpaired.':'Could not unpair: '+(r.error||'unknown error'),!r.ok);
+  init();
 }
 async function renameDev(id){
-  const n=prompt('New name:'); if(n==null)return;
-  await api('PATCH','/api/devices/'+id,{name:n}); init();
-}
-async function gpick(){
-  const r=await api('POST','/api/gphotos/pick');
-  if(r.ok&&r.picker_uri) open(r.picker_uri,'_blank'); else alert('Error: '+r.error);
+  const n=prompt('Name this frame:', '');
+  if(n==null||!n.trim())return;
+  const r=await api('PATCH','/api/devices/'+id,{name:n.trim()});
+  devMsg(r.ok?'Renamed.':'Could not rename: '+(r.error||'unknown error'),!r.ok);
+  init();
 }
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
 init();
 </script></body></html>"""
+
 
 CLAIM_HTML = """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1'><title>Pair device</title>
@@ -1307,7 +1350,7 @@ def main():
     # Cloud Run injects $PORT; local runs use config.json.
     port = int(os.environ.get("PORT", APP.cfg.get("port", 8765)))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"SpectraFrame server v2.1 on :{port} (frame {W}x{H})")
+    print(f"SpectraFrame server v2.2 on :{port} (frame {W}x{H})")
     srv.serve_forever()
 
 

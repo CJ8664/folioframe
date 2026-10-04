@@ -3,44 +3,41 @@
 The server pulls your photos through Google's **Picker API** — a
 Google-hosted photo picker where you choose which photos the frame may use.
 
-## Model: bring your own OAuth client
+## Model: one service OAuth client, per-user data
 
-The admin configures **no** OAuth. Each user creates one Google OAuth
-client (once, ~5 minutes) and uses it for both sign-in and Photos. Your
-client secret, tokens, and photo cache are yours alone — never shared
-with other accounts on the same server.
+The admin configures **one** Google OAuth client once, in the server
+config. Every user then gets the familiar two-step flow and never sees
+any Cloud Console, client IDs, or secrets:
 
-## One-time Google Cloud setup (5 minutes, per user)
+1. Click the normal **Sign in with Google** button.
+2. On the console, click **Connect Google Photos** and approve Google's
+   consent screen.
+3. Click **Pick more photos** → open the picker link → select photos →
+   Done. The server polls, downloads originals into your private cache,
+   and your `google_photos` source rotates from it (unseen-first).
 
-You do steps 1–4 **before** signing in — the welcome page walks you
-through them and shows the exact redirect URI for the deployment
-(`<this-site>/api/gphotos/callback`).
+Each user's tokens and photo cache stay isolated per Google account —
+nobody else's photos are visible to you, and yours aren't visible to
+them.
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
-   create a project (any name, e.g. `spectra-frame`).
-2. **APIs & Services → Library**: search for **Photos Picker API** and enable
-   it. (Not "Photos Library API" — that's the restricted one.)
-3. **APIs & Services → OAuth consent screen**: choose **External**, fill in
-   the app name and your email. On the scopes step you don't need to add
-   anything manually. Save.
-   - While in **Testing** mode, add your Google account under **Test users**.
-     (Publishing the app removes this step but requires verification.)
-4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
-   - Application type: **Web application**
-   - Authorized redirect URIs: add the URI shown on the welcome page
-     (`http://localhost:8765/api/gphotos/callback` for local dev)
-5. Copy the **Client ID** — paste it on the welcome page and sign in.
+## One-time Google Cloud setup (admin only, ~5 minutes)
 
-## Connect Photos (after sign-in)
+Done once per deployment, never per user:
 
-1. Open your **account page** (the console). Under Google Photos you'll see
-   your sign-in client ID — paste that client's **client secret** and save.
-   (Write-only: it's stored server-side and never shown again.)
-2. Click **Connect Google Photos** and approve the consent screen.
-3. Click **Pick more photos** → open the picker link → select photos → Done.
-   The server polls, downloads originals into your private cache, and your
-   `google_photos` source rotates from it (unseen-first).
-4. Switch your photo source to `google_photos` in the console.
+1. In the [Google Cloud Console](https://console.cloud.google.com/),
+   enable the **Photos Picker API** on your project (not "Photos Library
+   API" — that's the restricted one).
+2. **APIs & Services → OAuth consent screen**: External, app name, your
+   email.
+3. **APIs & Services → Credentials**: create a **Web application** OAuth
+   client. Register the site's `/api/gphotos/callback` redirect URI.
+4. Put the client ID and a client secret under `"google"` in
+   `SPECTRA_CONFIG_JSON` (see `server/config.json.example`).
+
+For a personal/family deployment the OAuth consent screen may stay in
+Testing mode (add each user's account under **Test users**); Google
+deletes testing-mode refresh tokens after 7 days, so for a long-lived
+frame set the consent screen to **Production**.
 
 ## Honest limits (read first)
 
@@ -53,14 +50,13 @@ through them and shows the exact redirect URI for the deployment
   immediately, so this doesn't matter after import.
 - Sessions expire if you don't finish picking; just start a new pick.
 
-
 ## Headless servers
 
 The OAuth redirect URI is derived from the address **your browser** uses to
-open the console (`location.origin`), and the welcome page shows it to you.
-If the server runs on another box, open the console via an address your
-browser can reach (LAN IP, Tailscale name, or public URL) and register that
-origin's `/api/gphotos/callback` — no SSH tunnel needed.
+open the console (`location.origin`). If the server runs on another box,
+open the console via an address your browser can reach (LAN IP, Tailscale
+name, or public URL) and register that origin's `/api/gphotos/callback` —
+no SSH tunnel needed.
 
 ## Disconnect
 
