@@ -1,0 +1,4 @@
+-r requirements.txt
+firebase-admin>=6
+google-cloud-firestore>=2
+google-cloud-storage>=2

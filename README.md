@@ -14,8 +14,8 @@ Wake → Wi-Fi → time → OTA → fetch → paint → deep sleep.
 3. **Enable PSRAM** (required — the 960 KB frame buffer lives in PSRAM).
 4. `pio run -t upload`, then `pio device monitor`.
 5. First boot: join Wi-Fi `SF-Setup-SF-XXXXXX`, complete the portal.
-6. Serve frames: `python3 tools/frame_server.py`, set Image URL to
-   `http://<host>:8765/frame`.
+6. Serve frames: `python3 server/spectra_server.py`, open `/login`, sign in
+   with Google, and pair the device with the claim code on its screen.
 
 ## Layout
 
@@ -28,24 +28,40 @@ Wake → Wi-Fi → time → OTA → fetch → paint → deep sleep.
 
 ## Server protocol
 
-Any server can feed the frame — see [PROTOCOL.md](PROTOCOL.md). Contract:
-`GET /frame` → 960 000 bytes packed 4bpp + `ETag`; `304` skips the repaint.
-OTA: `GET /version` → build number, `GET /firmware.bin` → app image.
+Any server can feed the frame — see [PROTOCOL.md](PROTOCOL.md) (v2). Every
+device route requires a per-device Bearer token obtained through the
+claim-code pairing flow; every human route requires a Google sign-in session.
+There is no anonymous access to frames, photos, or device controls.
 
 ## Companion server
 
-`server/` is a working PROTOCOL.md server (Python + Pillow):
+`server/` is a working PROTOCOL.md server (Python + Pillow), MIT-licensed,
+fully self-hostable:
 
 ```bash
-pip install -r server/requirements.txt
-python3 server/spectra_server.py   # :8765, writes server/config.json
+pip install -r server/requirements.txt   # core only: Pillow + google-auth
+python3 server/spectra_server.py         # :8765, writes server/config.json
 ```
 
+Open `/login`, sign in with Google, pair a device with the claim code from
+its screen (`/claim`). Upload a photo from your phone to force-push it to a
+device; connect Google Photos (Picker API) for automatic rotation —
+see `docs/GOOGLE_PHOTOS.md`.
+
 Sources: `folder` (local albums), `picsum`, `url` (templates), `dashboard`
-(clock/weather), `google_photos` (Picker API — see `docs/GOOGLE_PHOTOS.md`)
-(clock + Open-Meteo weather). Rotation engine with unseen-first history,
-quiet hours, and ETag/304. Web UI at `/` with live preview; `/preview.png`,
-`/debug`, `/api/next`, `/api/source`, `/api/gphotos/*`. Tests: `server/tests/run.sh` (33 cases).
+(clock + Open-Meteo weather), `google_photos`. Rotation engine with
+unseen-first history, quiet hours, and ETag/304. Tests:
+`server/tests/run.sh` (73 cases).
+
+### Self-hosting
+
+The default configuration has **zero cloud dependencies**: the registry is a
+local JSON file, photo blobs live on local disk, and Google sign-in is
+verified directly against Google's keys (needs only a free OAuth client ID).
+Run it on any machine with Python 3.12+, or `docker build` the included
+`Dockerfile`. Firebase (Firestore, Cloud Storage, Firebase Auth, Cloud Run)
+is strictly opt-in via `firebase.project_id` — see `docs/FIREBASE.md`.
+Without it, no Firebase package is even imported.
 
 ## Verification
 
@@ -66,3 +82,7 @@ ecosystem), ESP-IDF C (3–5× boilerplate for the same result), ESPHome YAML
 
 On-device JPEG decode (`Panel::drawJpeg` hook), BLE provisioning
 (`app/Provisioner` seam), touch input, MQTT / native Home Assistant API.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Self-host it, fork it, sell it; it's yours.

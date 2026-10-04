@@ -1,5 +1,2 @@
 Pillow>=9
 google-auth>=2
-firebase-admin>=6
-google-cloud-firestore>=2
-google-cloud-storage>=2
