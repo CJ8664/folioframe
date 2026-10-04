@@ -1,0 +1,38 @@
+# SpectraFrame — self-hosted Docker Compose
+#
+# Run on any Docker host (umbrelOS, home server, VPS):
+#   1. Copy server/config.json.example -> server/config.json and edit it
+#      (at minimum: public_url, auth.allowlist, google_photos client).
+#   2. docker compose up -d --build
+#   3. Open https://<your-public-host>/login
+#
+# Data (device registry, photo blobs, Photos cache) lives in the
+# spectra-data volume and survives rebuilds. Back it up with:
+#   docker run --rm -v spectraframe_spectra-data:/data \
+#     -v "$PWD":/backup alpine tar czf /backup/spectra-data.tgz /data
+
+services:
+  spectraframe:
+    build: .
+    image: spectraframe:latest
+    container_name: spectraframe
+    ports:
+      - "8765:8765"
+    environment:
+      PORT: "8765"
+      # Alternative to the config file mount: full JSON config via env.
+      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com",...}'
+    volumes:
+      - ./server/config.json:/app/server/config.json:ro
+      - spectra-data:/app/server/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/config', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  spectra-data:

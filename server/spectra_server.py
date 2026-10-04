@@ -111,7 +111,8 @@ class Server:
         # Firebase Auth; without it everything stays local (dev/home lab).
         self.firebase_cfg = self.cfg.get("firebase", {})
         self.firebase_on = bool(self.firebase_cfg.get("project_id"))
-        self.public_url = (self.firebase_cfg.get("public_url")
+        self.public_url = (self.cfg.get("public_url")
+                           or self.firebase_cfg.get("public_url")
                            or os.environ.get("PUBLIC_URL", "")).rstrip("/")
 
         self.lock = threading.Lock()

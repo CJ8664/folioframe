@@ -1,0 +1,35 @@
+{
+  "auth": {
+    "allowlist": [
+      "you@example.com"
+    ],
+    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "provider": "google"
+  },
+  "dashboard": {
+    "lat": 36.17,
+    "lon": -115.14,
+    "timezone": "America/Los_Angeles"
+  },
+  "dither": "floyd",
+  "folder": {
+    "dir": "~/Pictures/frame"
+  },
+  "google_photos": {
+    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "client_secret": "YOUR_GOOGLE_OAUTH_CLIENT_SECRET"
+  },
+  "picsum": {
+    "height": 1600,
+    "width": 1200
+  },
+  "port": 8765,
+  "public_url": "https://frame.example.com",
+  "quiet_end": "07:00",
+  "quiet_start": "22:00",
+  "rotation_minutes": 60,
+  "source": "picsum",
+  "url": {
+    "template": "https://picsum.photos/seed/{seed}/1200/1600"
+  }
+}
