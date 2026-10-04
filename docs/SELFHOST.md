@@ -20,7 +20,25 @@ directly against Google's keys. Firebase is strictly opt-in
   - Authorized redirect URIs: `https://frame.example.com/api/gphotos/callback`
     (only needed if you use the Google Photos source)
 
-## Deploy
+## Deploy via Portainer (no SSH needed)
+
+If Portainer is installed on your host:
+
+1. Open Portainer (on your local network — its port is usually not exposed
+   remotely).
+2. **Stacks → Add stack** → name it `spectraframe`.
+3. Build method: **Repository** → URL
+   `https://github.com/CJ8664/spectra-frame`, compose path
+   `docker-compose.yml`. (Private repo: add your GitHub personal access
+   token under Portainer's git credentials.)
+4. **Environment variables** → add one:
+   - name: `SPECTRA_CONFIG_JSON`
+   - value: your full config JSON (same keys as `config.json.example`:
+     `public_url`, `auth`, `google_photos`, …). This overrides the file
+     mount, so no config files to edit inside Portainer.
+5. **Deploy the stack**. Portainer builds the image and starts the container.
+
+## Deploy via SSH
 
 ```bash
 git clone https://github.com/CJ8664/spectra-frame.git
