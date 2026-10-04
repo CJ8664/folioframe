@@ -316,7 +316,9 @@ starts, per the standing proof-checklist rule.
 
 ## 7. Decisions (recorded 2026-10-02)
 
-1. **Hosting: Firebase.** Proceeding with Firebase (Auth + Cloud Run + Firestore);
+1. **Hosting: Firebase.** Proceeding with Firebase (Cloud Run + Firestore;
+   sign-in is direct Google ID-token verification with each user's own OAuth
+   client -- no Firebase Authentication setup);
    keeping the server portable via the storage abstraction so a self-hosted
    Docker variant stays possible. If any Firebase step proves hard, flag it
    instead of pushing through.
@@ -326,7 +328,12 @@ starts, per the standing proof-checklist rule.
    Re-claiming transfers ownership: the old token is revoked atomically at
    claim time, so there is never a moment with two owners.
 3. **Scope:** single-user allowlist (Chirag) with multi-user-capable schema —
-   pending explicit confirmation.
+   **superseded 2026-10-04 by the bring-your-own-OAuth decision:** the admin
+   configures zero OAuth; each user brings their own Google OAuth client via
+   the public welcome page. Accounts are per-user by construction (own client,
+   own Photos tokens/cache, own devices, own source). `auth.allowlist`
+   remains as an optional email gate (empty = anyone may sign in; recommended:
+   Chirag-only for his deployment).
 4. **Google Photos:** Picker-only for v1 — **confirmed** 2026-10-02.
 5. **Force push (2026-10-02):** uploading a photo from the phone (signed in)
    must be able to override the device's assigned source immediately (§3.6).

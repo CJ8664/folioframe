@@ -1,16 +1,31 @@
 #!/usr/bin/env python3
 """SpectraFrame companion server.
 
-Implements PROTOCOL.md v2:
-  Human (Google sign-in session):
-    GET  /login, /claim, /               console pages
-    POST /api/auth/token                 {id_token} -> session cookie
-    GET  /api/session, /api/devices     session info + my devices
+Implements PROTOCOL.md v2.1:
+  Public:
+    GET  /                              welcome page (or console if signed in)
+    GET  /login                         -> redirects to /
+    POST /api/auth/token                {id_token, client_id} -> session
+  Human (signed-in session; Google sign-in with the user's OWN OAuth
+  client -- the admin configures no OAuth):
+    GET  /claim                         pair-a-device page
+    GET  /api/session, /api/account     session info + account (client id,
+                                        photo source, Photos state)
+    PATCH /api/account/client           rotate the account's OAuth client ID
+    GET  /api/devices                   my devices
     POST /api/devices/claim             {code} claim a device to my account
     PATCH/DELETE /api/devices/{id}      rename / unpair (revokes token)
     POST /api/devices/{id}/photos/upload  multipart -> pinned override
     DELETE /api/devices/{id}/photos/override  clear override
     GET  /api/devices/{id}/preview      PNG of what the device shows
+    POST /api/gphotos/setup            {client_secret} (write-only)
+    GET  /api/gphotos/connect          -> Google consent (per-user client)
+    GET  /api/gphotos/callback         OAuth callback (per-user)
+    GET  /api/gphotos/status           per-user Photos state
+    POST /api/gphotos/pick             start a picker import (per user)
+    POST /api/gphotos/disconnect        revoke per-user Photos tokens
+    POST /api/next                      rotate my devices' frames now
+    POST /api/source                    {name} set my photo source
   Device (Authorization: Bearer <token>):
     POST /v1/device/register            {device_id,...} -> claim code
     POST /v1/device/claim               {device_id, claim_code} poll
@@ -20,9 +35,11 @@ Implements PROTOCOL.md v2:
     GET  /v1/device/ota/version, /v1/device/ota/firmware.bin
 
 Security: no anonymous access to any frame, photo, or device control.
-Config: server/config.json (created with defaults on first run).
-State:  server/state.json (rotation history) + server/data/registry.json
-        (users/devices/sessions, 0600).
+The welcome page is the only public page. Each user's Photos credentials,
+tokens, and photo cache are isolated per user.
+Config: server/config.json (created with defaults on first run) -- holds
+NO OAuth credentials; the admin only sets port/public_url/source defaults.
+State: server/data/registry.json (users/devices/sessions, 0600).
 """
 import http.server
 import json
@@ -42,13 +59,12 @@ import sources.url  # noqa: F401
 import sources.dashboard  # noqa: F401
 import sources.google_photos  # noqa: F401
 from sources import SOURCES
-from sources.google_photos import (GPhotosController, PickerClient, PickFlow,
-                                   default_cache_dir)
-from auth import AuthManager, AuthError, SESSION_COOKIE
+from sources.google_photos import (GPhotosController, PickerClient, PickFlow)
+from auth import AuthManager, AuthError, SESSION_COOKIE, CLIENT_ID_RE
 from devices import DeviceRegistry, AlreadyPaired, BadClaim, RateLimiter
 from store import JsonStore, FirestoreStore
 from blobs import LocalBlobStore, GCSBlobStore
-from token_store import FirestoreTokenStore
+from token_store import StoreTokenStore
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -104,17 +120,15 @@ class Server:
         env_cfg = os.environ.get("SPECTRA_CONFIG_JSON")
         if env_cfg:
             self.cfg.update(json.loads(env_cfg))
-        if self.cfg.get("auth", {}).get("provider", "google") == "google" \
-                and not (self.cfg.get("auth", {}).get("client_id")
-                         or self.cfg.get("google_photos", {}).get("client_id")):
-            print("WARNING: no Google OAuth client_id configured "
-                  "(auth.client_id). The /login page will render but sign-in "
-                  "will fail. Set it via config or SPECTRA_CONFIG_JSON.")
+        # NOTE: the admin configures NO OAuth here. Each user brings their
+        # own Google OAuth client (welcome page); auth.allowlist optionally
+        # restricts which Google accounts may sign in (empty = anyone).
 
         # ---- Firebase mode ------------------------------------------------
         # Enabled when config has firebase.project_id. On Cloud Run this
-        # switches persistence to Firestore + Cloud Storage and auth to
-        # Firebase Auth; without it everything stays local (dev/home lab).
+        # switches persistence to Firestore + Cloud Storage; without it
+        # everything stays local (dev/home lab). Auth is direct Google
+        # ID-token verification on both backends (no Firebase Auth setup).
         self.firebase_cfg = self.cfg.get("firebase", {})
         self.firebase_on = bool(self.firebase_cfg.get("project_id"))
         self.public_url = (self.cfg.get("public_url")
@@ -128,15 +142,14 @@ class Server:
             bucket = self.firebase_cfg.get("storage_bucket",
                                            f"{project}.appspot.com")
             self.blobs = GCSBlobStore(bucket)
-            token_store = FirestoreTokenStore(self.store)
         else:
             self.store = JsonStore(os.path.join(self.data_dir,
                                                 "registry.json"))
             self.blobs = LocalBlobStore(self.data_dir)
-            token_store = None
 
         # Rotation state lives in the store so it survives container
         # restarts; one-time import from the legacy state.json file.
+        # History is keyed "{user_sub}:{source}" (per-user unseen-first).
         rot = self.store.get("_service", "rotation")
         if rot is None and os.path.exists(st_path):
             try:
@@ -144,7 +157,7 @@ class Server:
                     rot = json.load(f)
             except (ValueError, OSError):
                 rot = None
-        self.state = {"history": {}, "last_rotation": 0}
+        self.state = {"history": {}}
         if isinstance(rot, dict):
             self.state.update(rot)
         self._save_state()
@@ -152,59 +165,92 @@ class Server:
         self.auth = AuthManager(self.store, self.cfg)
         self.devices = DeviceRegistry(self.store)
         self.ratelimit = RateLimiter()
-        self.source = self._make_source(self.cfg.get("source", "picsum"))
-        self.gphotos = GPhotosController(
-            self.cfg, self.cfg.get("port", 8765), token_store=token_store,
-            blob_store=self.blobs, public_url=self.public_url or None,
-            client_provider=self._gphotos_client)
-
-    def _gphotos_client(self):
-        """(client_id, client_secret): setup wizard's saved values first,
-        config.json fallback. Lets the Photos OAuth client be configured
-        from the console after login, with no restart."""
-        saved = self.store.get("_service", "gphotos_client") or {}
-        if saved.get("client_id") and saved.get("client_secret"):
-            return (saved["client_id"], saved["client_secret"])
-        g = self.cfg.get("google_photos", {})
-        return (g.get("client_id", ""), g.get("client_secret", ""))
-
-    def can_setup_photos(self, email):
-        """Who may save the Photos OAuth client: allowlisted users, or --
-        for a fresh open console -- anyone until the first client is saved."""
-        if email in self.auth.allowlist:
-            return True
-        return not self.auth.allowlist and not self.gphotos.configured
-        self.frame = None
-        self.etag = None
-        self.preview = None
-        self.last_error = ""
+        self._shared_sources = {}  # name -> Source (stateless, shared)
+        self._photos = {}          # google sub -> GPhotosController
+        self._frames = {}          # device_id -> current frame slot
         self.build = "1"
-        self.rotate(force=True)
+
+    # ---- per-user state -------------------------------------------------
+    def _get_user(self, sub):
+        return self.store.get("users", sub) or {}
+
+    def _put_user(self, sub, user):
+        self.store.put("users", sub, user)
+
+    def _user_client(self, sub):
+        """(oauth_client_id, photos_client_secret) for a user.
+
+        Read fresh from the store on every call so client rotation takes
+        effect without a restart. The secret is never returned by any API.
+        """
+        user = self._get_user(sub)
+        return (user.get("oauth_client_id", ""),
+                user.get("photos_client_secret", ""))
+
+    def photos_for(self, sub):
+        """Per-user Google Photos controller (bring-your-own OAuth).
+
+        Tokens are stored per user, the photo cache is namespaced per user
+        (blob prefix / cache dir). The server holds no Photos credentials
+        of its own.
+        """
+        ctrl = self._photos.get(sub)
+        if ctrl is None:
+            ctrl = GPhotosController(
+                self.cfg.get("port", 8765),
+                token_store=StoreTokenStore(self.store, sub),
+                blob_store=self.blobs,
+                blob_prefix=f"users/{sub}/gphotos/",
+                cache_dir=os.path.join(self.data_dir, "users", sub,
+                                       "gphotos"),
+                public_url=self.public_url or None,
+                client_provider=lambda s=sub: self._user_client(s),
+                store=self.store,
+                states_key=f"gphotos_oauth_states:{sub}",
+            )
+            self._photos[sub] = ctrl
+        return ctrl
+
+    def _user_source_name(self, sub):
+        name = (self._get_user(sub).get("source")
+                or self.cfg.get("source", "picsum"))
+        return name if name in SOURCES else "picsum"
+
+    def _user_source(self, sub, name):
+        if name == "google_photos":
+            return self.photos_for(sub).source
+        src = self._shared_sources.get(name)
+        if src is None:
+            src = self._shared_sources[name] = self._make_source(name)
+        return src
 
     def _make_source(self, name):
         cls = SOURCES.get(name)
         if not cls:
             raise ValueError(f"unknown source {name}")
-        cfg = dict(self.cfg.get(name, {}))
-        if name == "google_photos":
-            # Blob-backed cache survives container restarts on Cloud Run.
-            cfg["blob_store"] = self.blobs
-        return cls(cfg)
+        return cls(dict(self.cfg.get(name, {})))
 
     def _save_state(self):
         self.store.put("_service", "rotation", self.state)
 
-    def switch_source(self, name):
-        with self.lock:
-            self.source = self._make_source(name)
-            self.cfg["source"] = name
-            with open(CONFIG_PATH, "w") as f:
-                json.dump(self.cfg, f, indent=2)
-        self.rotate(force=True)
+    def switch_source(self, sub, name):
+        """Set a user's photo source (their devices follow)."""
+        if name not in SOURCES:
+            raise ValueError(f"unknown source {name}")
+        user = self._get_user(sub)
+        user["source"] = name
+        self._put_user(sub, user)
+        for dev in self.devices.user_devices(sub):
+            try:
+                self._rotate_device(dev)
+            except Exception as e:
+                print(f"switch_source rotate {dev['device_id']}: {e}")
 
-    def gphotos_pick(self):
-        """Create a picker session and import in the background."""
-        gp = self.gphotos
+    def gphotos_pick(self, sub):
+        """Create a picker session and import in the background (per user)."""
+        gp = self.photos_for(sub)
+        if not gp.configured:
+            raise RuntimeError("save your OAuth client secret first")
         if not gp.oauth.connected:
             raise RuntimeError("Google Photos not connected")
         client = PickerClient(gp.oauth)
@@ -215,8 +261,8 @@ class Server:
 
         def run():
             try:
-                n = PickFlow(client, default_cache_dir(),
-                             blob_store=self.blobs).run(session["id"])
+                n = PickFlow(client, gp.cache_dir, blob_store=self.blobs,
+                             blob_prefix=gp.blob_prefix).run(session["id"])
                 gp.pick_state.update(status="done", count=n)
             except Exception as e:
                 gp.pick_state.update(status="error", error=str(e))
@@ -224,68 +270,103 @@ class Server:
         threading.Thread(target=run, daemon=True).start()
         return gp.pick_state["picker_uri"]
 
-    def rotate(self, force=False):
-        with self.lock:
-            name = self.source.name
-            hist = self.state["history"].get(name, [])
-            try:
-                item = self.source.next_id(hist)
-                if item is None:
-                    self.last_error = f"source {name}: no items"
-                    return False
-                img = self.source.load(item)
-                frame = pipeline.process_image(
-                    img, W, H, self.cfg.get("dither", "floyd"))
-                self.frame = frame
-                self.etag = pipeline.frame_etag(frame)
-                self.preview = pipeline.preview_png(frame, W, H)
-                hist.append(item)
-                self.state["history"][name] = hist[-200:]
-                self.state["last_rotation"] = int(time.time())
-                self.last_error = ""
-                self._save_state()
-                print(f"rotated: {name}/{item} etag={self.etag}")
-                return True
-            except Exception as e:  # keep serving the old frame
-                self.last_error = f"{name}: {e}"
-                print("rotate failed:", self.last_error)
-                return False
-
-    def tick(self):
-        """Background rotation tick: interval + quiet hours."""
+    # ---- per-device rotation -------------------------------------------
+    def _in_quiet_now(self):
         now = time.localtime()
         now_min = now.tm_hour * 60 + now.tm_min
-        if in_quiet(now_min, self.cfg.get("quiet_start", "22:00"),
-                    self.cfg.get("quiet_end", "07:00")):
-            return
+        return in_quiet(now_min, self.cfg.get("quiet_start", "22:00"),
+                        self.cfg.get("quiet_end", "07:00"))
+
+    def _rotate_device(self, dev):
+        """Render the next frame for one device from its owner's source."""
+        sub = dev.get("owner")
+        name = self._user_source_name(sub)
+        src = self._user_source(sub, name)
+        hist_key = f"{sub}:{name}"
+        hist = self.state["history"].get(hist_key, [])
+        item = src.next_id(hist)
+        if item is None:
+            raise RuntimeError(f"source {name}: no items")
+        img = src.load(item)
+        frame = pipeline.process_image(img, W, H,
+                                       self.cfg.get("dither", "floyd"))
+        self._frames[dev["device_id"]] = {
+            "frame": frame,
+            "etag": pipeline.frame_etag(frame),
+            "preview": pipeline.preview_png(frame, W, H),
+            "source": name,
+            "last_rotation": int(time.time()),
+        }
+        hist.append(item)
+        self.state["history"][hist_key] = hist[-200:]
+        self._save_state()
+        print(f"rotated: {dev['device_id']} {name}/{item}")
+
+    def _frame_due(self, dev):
+        slot = self._frames.get(dev["device_id"])
+        if slot is None:
+            return True
         interval = self.cfg.get("rotation_minutes", 60) * 60
-        if time.time() - self.state["last_rotation"] >= interval:
-            self.rotate()
+        return time.time() - slot["last_rotation"] >= interval
+
+    def tick(self):
+        """Background rotation tick: interval + quiet hours, per device."""
+        if self._in_quiet_now():
+            return
+        for dev in self.store.all("devices").values():
+            try:
+                if self._frame_due(dev):
+                    self._rotate_device(dev)
+            except Exception as e:
+                print(f"tick rotate {dev.get('device_id')}: {e}")
 
     def device_frame(self, dev):
-        """(frame_bytes, etag): pinned override wins, else global rotation.
+        """(frame_bytes, etag): pinned override wins, else the device's own
+        rotation slot.
 
-        tick() first: on Cloud Run instances scale to zero, so rotation must
-        also happen lazily on device wake, not only on the background thread.
+        Lazy rotation on wake: on Cloud Run instances scale to zero, so
+        rotation must also happen here, not only on the background thread.
         """
-        try:
-            self.tick()
-        except Exception as e:
-            print("lazy tick error:", e)
+        slot = self._frames.get(dev["device_id"])
+        if slot is None:
+            # First frame for this device: always render (even in quiet
+            # hours -- a freshly paired frame should not stay blank).
+            try:
+                self._rotate_device(dev)
+            except Exception as e:
+                print("first-frame rotate error:", e)
+                return None, None
+        elif not self._in_quiet_now() and self._frame_due(dev):
+            try:
+                self._rotate_device(dev)
+            except Exception as e:  # keep serving the old frame
+                print("lazy tick error:", e)
         etag = dev.get("override_etag")
         if etag:
-            data = self.blobs.get(f"devices/{dev['device_id']}/override.frame")
+            data = self.blobs.get(
+                f"devices/{dev['device_id']}/override.frame")
             if data:
                 return data, etag
-        return self.frame, self.etag
+        slot = self._frames.get(dev["device_id"])
+        if slot is None:
+            return None, None
+        return slot["frame"], slot["etag"]
 
     def device_preview(self, dev):
         etag = dev.get("override_etag")
         if etag:
-            data = self.blobs.get(f"devices/{dev['device_id']}/override.png")
+            data = self.blobs.get(
+                f"devices/{dev['device_id']}/override.png")
             if data:
                 return data
-        return self.preview
+        slot = self._frames.get(dev["device_id"])
+        if slot is None:
+            try:
+                self._rotate_device(dev)
+            except Exception:
+                return None
+            slot = self._frames.get(dev["device_id"])
+        return slot["preview"] if slot else None
 
     def set_override(self, device_id, img):
         """Pin an uploaded PIL image as this device's frame. Returns etag."""
@@ -302,16 +383,17 @@ class Server:
         self.blobs.delete(f"devices/{device_id}/override.frame")
         self.blobs.delete(f"devices/{device_id}/override.png")
 
-    def describe(self):
-        return {
-            "source": self.source.describe(),
+    def describe(self, sub=None):
+        d = {
             "sources": sorted(SOURCES),
             "rotation_minutes": self.cfg.get("rotation_minutes"),
-            "last_rotation": self.state["last_rotation"],
-            "etag": self.etag,
-            "last_error": self.last_error,
             "build": self.build,
         }
+        if sub:
+            d["source"] = self._user_source_name(sub)
+            d["devices"] = [dev["device_id"]
+                            for dev in self.devices.user_devices(sub)]
+        return d
 
 
 APP = None  # set in main()
@@ -340,6 +422,28 @@ def _parse_multipart(body, content_type):
         out[fm.group(1).decode()] = (fm.group(2).decode() if fm.group(2)
                                      else "", data)
     return out
+
+
+def _valid_redirect_origin(origin):
+    """Validate the console's location.origin for OAuth redirect use.
+
+    The Photos OAuth redirect_uri must exactly match a URI the user
+    registered, so it is derived from the page the user is actually on.
+    Restricted to https (or http on localhost) so it can't be pointed at
+    an attacker's site.
+    """
+    try:
+        u = urllib.parse.urlparse(origin or "")
+    except Exception:
+        return None
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return None
+    if u.scheme == "http" and u.hostname not in ("localhost", "127.0.0.1"):
+        return None
+    netloc = u.hostname
+    if u.port and u.port not in (80, 443):
+        netloc += f":{u.port}"
+    return f"{u.scheme}://{netloc}"
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -439,21 +543,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if p == "/login":
-            self._send(200, "text/html", LOGIN_HTML(
-                APP.auth.provider, APP.auth.client_id,
-                APP.firebase_cfg.get("web", {})).encode())
+            # Kept for old bookmarks; sign-in now starts at the welcome page.
+            self._redirect("/")
             return
 
         if p == "/claim":
             if not self._human()[1]:
-                self._redirect("/login")
+                self._redirect("/")
                 return
             self._send(200, "text/html", CLAIM_HTML.encode())
             return
 
         if p == "/":
+            # The only public page: a welcome page describing the steps.
+            # Signed-in users get their console (account page) instead.
             if not self._human()[1]:
-                self._redirect("/login")
+                legacy = APP.cfg.get("auth", {}).get("client_id", "")
+                self._send(200, "text/html",
+                            WELCOME_HTML(legacy).encode())
                 return
             self._send(200, "text/html", CONSOLE_HTML.encode())
             return
@@ -466,6 +573,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             user = APP.store.get("users", sub) or {}
             self._json(200, {"ok": True, "email": user.get("email", ""),
                              "csrf": sess.get("csrf", "")})
+            return
+
+        if p == "/api/account":
+            got = self._require_human()
+            if not got:
+                return
+            _, _, sub = got
+            user = APP._get_user(sub)
+            gp = APP.photos_for(sub)
+            self._json(200, {
+                "ok": True,
+                "email": user.get("email", ""),
+                "name": user.get("name", ""),
+                "client_id": user.get("oauth_client_id", ""),
+                "source": APP._user_source_name(sub),
+                "sources": sorted(SOURCES),
+                "photos_secret_saved": bool(
+                    user.get("photos_client_secret")),
+                "photos_connected": gp.oauth.connected,
+                "photos_cached": gp.cache_count(),
+            })
             return
 
         if p == "/api/devices":
@@ -540,44 +668,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if p == "/debug":
-            if not self._require_human():
+            got = self._require_human()
+            if not got:
                 return
-            self._json(200, APP.describe())
+            self._json(200, APP.describe(got[2]))
             return
 
         if p == "/api/gphotos/connect":
-            if not self._require_human():
+            got = self._require_human()
+            if not got:
                 return
-            gp = APP.gphotos
+            _, _, sub = got
+            gp = APP.photos_for(sub)
             if not gp.configured:
-                html = """<html><body><h2>Google Photos setup needed</h2>
-<p>Add your OAuth client to <code>server/config.json</code>:</p>
-<pre>"google_photos": {
-  "client_id": "...apps.googleusercontent.com",
-  "client_secret": "..."
-}</pre>
-<p>See <code>docs/GOOGLE_PHOTOS.md</code> for the Cloud Console steps,
-then restart the server and click Connect again.</p></body></html>"""
-                self._send(200, "text/html", html.encode())
-            else:
-                self.send_response(302)
-                self.send_header(
-                    "Location", gp.oauth.auth_url(gp.new_state()))
-                self.end_headers()
-            return
-
-        if p == "/api/gphotos/callback":
-            if not self._require_human():
+                self._json(400, {
+                    "ok": False,
+                    "error": "save your OAuth client secret on your "
+                             "account page first"})
                 return
             q = urllib.parse.parse_qs(
                 urllib.parse.urlparse(self.path).query)
+            origin = _valid_redirect_origin(q.get("origin", [""])[0])
+            if not origin:
+                self._json(400, {"ok": False, "error": "bad origin"})
+                return
+            redirect_uri = origin + "/api/gphotos/callback"
+            state = gp.new_state(redirect_uri)
+            self.send_response(302)
+            self.send_header(
+                "Location", gp.oauth.auth_url(state, redirect_uri))
+            self.end_headers()
+            return
+
+        if p == "/api/gphotos/callback":
+            got = self._require_human()
+            if not got:
+                return
+            _, _, sub = got
+            q = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
             code, state = q.get("code", [""])[0], q.get("state", [""])[0]
-            gp = APP.gphotos
-            if not code or not gp.valid_state(state):
+            gp = APP.photos_for(sub)
+            redirect_uri = gp.pop_state(state) if state else None
+            if not code or not redirect_uri:
                 self._send(400, "text/plain", b"bad oauth response")
             else:
                 try:
-                    gp.oauth.exchange_code(code)
+                    gp.oauth.exchange_code(code, redirect_uri)
                     self._redirect("/")
                 except Exception as e:
                     self._send(500, "text/plain",
@@ -585,12 +722,17 @@ then restart the server and click Connect again.</p></body></html>"""
             return
 
         if p == "/api/gphotos/status":
-            if not self._require_human():
+            got = self._require_human()
+            if not got:
                 return
-            gp = APP.gphotos
+            _, _, sub = got
+            gp = APP.photos_for(sub)
+            user = APP._get_user(sub)
             ps = gp.pick_state or {}
+            # The client secret is write-only: never exposed here.
             self._json(200, {
-                "configured": gp.configured,
+                "client_id": user.get("oauth_client_id", ""),
+                "secret_saved": bool(user.get("photos_client_secret")),
                 "connected": gp.oauth.connected,
                 "cached": gp.cache_count(),
                 "picking": ps.get("status") == "waiting",
@@ -613,14 +755,41 @@ then restart the server and click Connect again.</p></body></html>"""
             if data is None:
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
+            # Bring-your-own-OAuth: the client ID belongs to the user, taken
+            # from the welcome page. The server holds no OAuth client.
+            # (No rate limit here: Google ID tokens can't be brute-forced --
+            # forging one requires Google's signing keys -- and the endpoint
+            # is no more expensive than the other public routes. The
+            # guessable claim codes stay rate-limited.)
+            client_id = (data.get("client_id") or "").strip()
             try:
                 sub, email, name = APP.auth.verify_id_token(
-                    data.get("id_token", ""))
+                    data.get("id_token", ""), client_id)
             except AuthError as e:
                 self._json(401, {"ok": False, "error": str(e)})
                 return
-            APP.store.put("users", sub, {"email": email, "name": name,
-                                         "last_login": int(time.time())})
+            user = APP.store.get("users", sub) or {}
+            if user.get("oauth_client_id") \
+                    and user["oauth_client_id"] != client_id:
+                self._json(401, {
+                    "ok": False,
+                    "error": "this account uses a different OAuth client -- "
+                             "update it from your account page, then sign "
+                             "in again"})
+                return
+            if not user.get("oauth_client_id"):
+                user["oauth_client_id"] = client_id
+                # One-time migration from the retired global setup wizard:
+                # adopt its client into the account that signs in with it.
+                legacy = APP.store.get("_service", "gphotos_client") or {}
+                if legacy.get("client_id") == client_id \
+                        and legacy.get("client_secret"):
+                    user["photos_client_secret"] = legacy["client_secret"]
+                if legacy:
+                    APP.store.delete("_service", "gphotos_client")
+            user.update({"email": email, "name": name,
+                         "last_login": int(time.time())})
+            APP.store.put("users", sub, user)
             session_id, csrf = APP.auth.create_session(sub)
             self._json(200, {"ok": True, "email": email, "csrf": csrf},
                        self._set_session_cookie(session_id))
@@ -744,29 +913,25 @@ then restart the server and click Connect again.</p></body></html>"""
             return
 
         if p == "/api/gphotos/setup":
-            # Save the Photos OAuth client (one-time, via the in-console
-            # wizard). The secret is write-only: no endpoint ever returns it.
+            # Save the user's Photos OAuth client secret. The client ID is
+            # already on their account (from sign-in); one client does both.
+            # The secret is write-only: no endpoint ever returns it.
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
                 return
             _, _, sub = got
-            user = APP.store.get("users", sub) or {}
-            if not APP.can_setup_photos(user.get("email", "")):
-                self._json(403, {"ok": False, "error": "not permitted"})
-                return
             data = self._read_json()
             if data is None:
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
-            cid = (data.get("client_id") or "").strip()
-            csec = (data.get("client_secret") or "").strip()
-            if not cid or not csec:
+            secret = (data.get("client_secret") or "").strip()
+            if not secret:
                 self._json(400, {"ok": False,
-                                 "error": "client_id and client_secret "
-                                          "are required"})
+                                 "error": "client_secret is required"})
                 return
-            APP.store.put("_service", "gphotos_client",
-                          {"client_id": cid, "client_secret": csec})
+            user = APP._get_user(sub)
+            user["photos_client_secret"] = secret
+            APP._put_user(sub, user)
             self._json(200, {"ok": True})
             return
 
@@ -775,7 +940,7 @@ then restart the server and click Connect again.</p></body></html>"""
             if not got or not self._require_csrf(got[1]):
                 return
             try:
-                uri = APP.gphotos_pick()
+                uri = APP.gphotos_pick(got[2])
                 self._json(200, {"ok": True, "picker_uri": uri})
             except Exception as e:
                 self._json(400, {"ok": False, "error": str(e)})
@@ -785,7 +950,7 @@ then restart the server and click Connect again.</p></body></html>"""
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
                 return
-            APP.gphotos.oauth.disconnect()
+            APP.photos_for(got[2]).oauth.disconnect()
             self._json(200, {"ok": True})
             return
 
@@ -793,7 +958,12 @@ then restart the server and click Connect again.</p></body></html>"""
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
                 return
-            ok = APP.rotate(force=True)
+            ok = True
+            for dev in APP.devices.user_devices(got[2]):
+                try:
+                    APP._rotate_device(dev)
+                except Exception:
+                    ok = False
             self._json(200, {"ok": ok})
             return
 
@@ -806,7 +976,7 @@ then restart the server and click Connect again.</p></body></html>"""
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
             try:
-                APP.switch_source(data.get("name", ""))
+                APP.switch_source(got[2], data.get("name", ""))
                 self._json(200, {"ok": True})
             except ValueError as e:
                 self._json(400, {"ok": False, "error": str(e)})
@@ -817,6 +987,30 @@ then restart the server and click Connect again.</p></body></html>"""
 
     # ---- PATCH / DELETE ------------------------------------------------
     def do_PATCH(self):
+        p = urllib.parse.urlparse(self.path).path
+        if p == "/api/account/client":
+            # Rotate the account's OAuth client ID (e.g. after creating a
+            # new client). Takes effect on next sign-in; Photos keeps
+            # working once the new client's secret is saved.
+            got = self._require_human()
+            if not got or not self._require_csrf(got[1]):
+                return
+            _, _, sub = got
+            data = self._read_json()
+            if data is None:
+                self._json(400, {"ok": False, "error": "bad json"})
+                return
+            cid = (data.get("client_id") or "").strip()
+            if not CLIENT_ID_RE.fullmatch(cid):
+                self._json(400, {"ok": False,
+                                 "error": "not a valid Google OAuth "
+                                          "client ID"})
+                return
+            user = APP._get_user(sub)
+            user["oauth_client_id"] = cid
+            APP._put_user(sub, user)
+            self._json(200, {"ok": True})
+            return
         dev_id, rest = self._device_id_from_path("/api/devices/")
         if dev_id and not rest:
             got = self._require_human()
@@ -872,50 +1066,72 @@ then restart the server and click Connect again.</p></body></html>"""
 # Console HTML
 # --------------------------------------------------------------------------
 
-def LOGIN_HTML(provider, client_id, firebase_web):
-    if provider == "firebase":
-        cfg_json = json.dumps(firebase_web)
-        return f"""<html><head><meta name='viewport'
-content='width=device-width,initial-scale=1'><title>SpectraFrame login</title>
-</head><body style='font-family:sans-serif;max-width:480px;margin:40px auto'>
-<h2>SpectraFrame</h2><p>Sign in with your Google account to manage devices.</p>
-<button onclick='signIn()' style='font-size:1.1em;padding:10px 18px'>
-Sign in with Google</button>
-<p id="err" style="color:red"></p>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script>
-firebase.initializeApp({cfg_json});
-async function signIn(){{
-  try{{
-    const cred=await firebase.auth().signInWithPopup(
-      new firebase.auth.GoogleAuthProvider());
-    const tok=await cred.user.getIdToken();
-    const r=await fetch('/api/auth/token',{{method:'POST',
-      headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify({{id_token:tok}})}});
-    const j=await r.json();
-    if(j.ok) location.href='/';
-    else document.getElementById('err').textContent=j.error;
-  }}catch(e){{document.getElementById('err').textContent=e.message;}}
-}}
-</script></body></html>"""
+def WELCOME_HTML(legacy_client_id=""):
+    """Public welcome page: the only unauthenticated page.
+
+    Describes the steps; the user enters their OWN Google OAuth client ID
+    (bring-your-own model -- the admin configures no OAuth), then signs in
+    with Google. Everything beyond this page requires the session.
+    """
+    prefill = legacy_client_id if CLIENT_ID_RE.fullmatch(
+        legacy_client_id or "") else ""
     return f"""<html><head><meta name='viewport'
-content='width=device-width,initial-scale=1'><title>SpectraFrame login</title>
-</head><body style='font-family:sans-serif;max-width:480px;margin:40px auto'>
-<h2>SpectraFrame</h2><p>Sign in with your Google account to manage devices.</p>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<div id="g_id_onload" data-client_id="{client_id}"
-     data-callback="onGoogle" data-auto_prompt="false"></div>
-<div class="g_id_signin" data-type="standard"></div>
-<p id="err" style="color:red"></p>
+content='width=device-width,initial-scale=1'><title>SpectraFrame</title>
+</head><body style='font-family:sans-serif;max-width:640px;margin:40px auto'>
+<h2>SpectraFrame</h2>
+<p>Your photos, on e-ink. This server belongs to whoever deployed it --
+there is no central account system. You bring your own Google credentials;
+nothing here is shared with anyone else.</p>
+<h3>Get started (one time, about 5 minutes)</h3>
+<ol>
+<li>Create a <a href='https://console.cloud.google.com/'
+target='_blank'>Google Cloud project</a> (any name).</li>
+<li><b>APIs &amp; Services &rarr; OAuth consent screen</b>: choose
+<b>External</b>, fill in the app name and your email. Under
+<b>Test users</b>, add your Google account.</li>
+<li><b>APIs &amp; Services &rarr; Credentials &rarr; Create Credentials
+&rarr; OAuth client ID</b>: application type <b>Web application</b>.
+Under <b>Authorized redirect URIs</b> add exactly:<br>
+<code id='cburi'></code></li>
+<li>Copy the <b>Client ID</b> and paste it below. One client does
+everything: sign-in now, Google Photos later.</li>
+</ol>
+<input id='cid' placeholder='xxxx.apps.googleusercontent.com' size='50'
+ value='{prefill}'>
+<button onclick='cont()'>Continue</button>
+<p id='err' style='color:red'></p>
+<div id='signin' style='display:none'>
+<p>Now sign in with the Google account you added as a test user:</p>
+<script src='https://accounts.google.com/gsi/client' async defer></script>
+<div id='gbtn'></div>
+<p><small>Trouble? Google sign-in needs this page served over HTTPS
+(or opened via <code>localhost</code>).</small></p>
+</div>
 <script>
+document.getElementById('cburi').textContent =
+  location.origin + '/api/gphotos/callback';
+function cont(){{
+  const cid = document.getElementById('cid').value.trim();
+  if(!/^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$/.test(cid)){{
+    document.getElementById('err').textContent =
+      "That doesn't look like a Google OAuth client ID.";
+    return;
+  }}
+  document.getElementById('err').textContent = '';
+  document.getElementById('signin').style.display = 'block';
+  window._cid = cid;
+  google.accounts.id.initialize({{client_id: cid, callback: onGoogle}});
+  google.accounts.id.renderButton(document.getElementById('gbtn'),
+    {{type: 'standard'}});
+}}
 function onGoogle(r){{
-  fetch('/api/auth/token',{{method:'POST',
-    headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{id_token:r.credential}})}})
-  .then(r=>r.json()).then(j=>{{
-    if(j.ok) location.href='/'; else document.getElementById('err').textContent=j.error;
+  fetch('/api/auth/token', {{method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{id_token: r.credential,
+                          client_id: window._cid}})}})
+  .then(r => r.json()).then(j => {{
+    if(j.ok) location.href = '/';
+    else document.getElementById('err').textContent = j.error;
   }});
 }}
 </script></body></html>"""
@@ -927,9 +1143,12 @@ content='width=device-width,initial-scale=1'><title>SpectraFrame</title>
 <h2>SpectraFrame console</h2>
 <p><span id='who'></span> · <a href='/claim'>Pair a device</a> ·
 <button onclick='logout()'>Sign out</button></p>
+<div id='acct'></div>
 <div id='devices'>loading…</div>
-<h3>Server source</h3>
-<div id='srv'></div>
+<h3>Photo source</h3>
+<div id='src'></div>
+<h3>Google Photos</h3>
+<div id='photos'></div>
 <script>
 let CSRF='';
 async function api(m,u,b,form){
@@ -939,17 +1158,26 @@ async function api(m,u,b,form){
 }
 async function init(){
   const s=await (await fetch('/api/session')).json();
-  if(!s.ok){location.href='/login';return;}
-  CSRF=s.csrf; document.getElementById('who').textContent=s.email;
+  if(!s.ok){location.href='/';return;}
+  CSRF=s.csrf;
+  const a=await (await fetch('/api/account')).json();
+  document.getElementById('who').textContent=a.email;
+  document.getElementById('acct').innerHTML=
+    `<div style='border:1px solid #ccc;padding:12px;margin:12px 0'>
+     <b>Account</b><br>Email: ${a.email}<br>
+     OAuth client: <code>${a.client_id}</code>
+     <button onclick='updClient()'>Update client ID</button><br>
+     <small>Your own Google OAuth client — sign-in and Photos both use it.
+     Only you can see this page's data.</small></div>`;
   const d=await (await fetch('/api/devices')).json();
   const el=document.getElementById('devices');
   if(!d.devices.length){el.innerHTML='<p>No devices yet. <a href="/claim">Pair one</a> — the code is on its screen.</p>';}
-  else el.innerHTML=d.devices.map(dev=>`
+  else el.innerHTML='<h3>My devices</h3>'+d.devices.map(dev=>`
     <div style='border:1px solid #ccc;padding:12px;margin:12px 0'>
       <b>${dev.name}</b> <small>${dev.device_id}</small><br>
       <small>last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
       · battery: ${dev.battery_pct??'—'}% · fw: ${dev.fw??'—'}</small><br>
-      ${dev.override?'<b>📌 pinned photo active</b> <button onclick="clearOv(\\''+dev.device_id+'\\')">clear</button><br>':''}
+      ${dev.override?'<b>pinned photo active</b> <button onclick="clearOv(\\''+dev.device_id+'\\')">clear</button><br>':''}
       <img src='/api/devices/${dev.device_id}/preview' width='200'><br>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
         <input type='file' name='photo' accept='image/*' required>
@@ -958,46 +1186,59 @@ async function init(){
       <button onclick='renameDev("${dev.device_id}")'>Rename</button>
       <button onclick='unpair("${dev.device_id}")'>Unpair</button>
     </div>`).join('');
+  document.getElementById('src').innerHTML=
+    a.sources.map(n=>`<button ${n===a.source?'disabled':''}
+      onclick="setSrc('${n}')">${n}</button>`).join(' ')+
+    ` <button onclick='nextFrame()'>Next photo</button>`;
   const g=await (await fetch('/api/gphotos/status')).json();
-  const srv=document.getElementById('srv');
-  if(!g.configured){ srv.innerHTML=wizardHTML(); }
-  else if(!g.connected){
-    srv.innerHTML=`<p><b>Connect Google Photos</b> to start your photo feed.</p>
-    <a href="/api/gphotos/connect"><button>Connect Google Photos</button></a>
+  const ph=document.getElementById('photos');
+  if(!g.secret_saved){
+    ph.innerHTML=`<p>Your sign-in client: <code>${g.client_id}</code></p>
+    <p>To enable Google Photos, paste this client's <b>client secret</b>
+    (Google Cloud &rarr; Credentials &rarr; click your client):</p>
+    <input id='gsec' type='password' size='50' placeholder='Client secret'>
+    <button onclick='saveSecret()'>Save secret</button><p id='secmsg'></p>
+    <p><small>Stored on this server only, never shown again. You can
+    disconnect any time.</small></p>`;
+  } else if(!g.connected){
+    ph.innerHTML=`<p>Client secret saved.</p>
+    <a href='/api/gphotos/connect?origin=${encodeURIComponent(location.origin)}'>
+    <button>Connect Google Photos</button></a>
     <p><small>You'll approve access on Google's consent screen — one click,
     no secrets to copy.</small></p>`;
+  } else {
+    ph.innerHTML=`Connected · ${g.cached} cached
+    <button onclick='gpick()'>Pick more photos</button>
+    <button onclick='gdisc()'>Disconnect</button>`;
+    if(g.picking) ph.innerHTML+=`<br><small>Picker open:
+      <a href='${g.picker_uri}' target='_blank'>continue picking</a></small>`;
   }
-  else srv.innerHTML=`Google Photos: connected · ${g.cached} cached
-    <button onclick="gpick()">Pick more photos</button>`;
 }
-function wizardHTML(){
-  const cb=location.origin+'/api/gphotos/callback';
-  return `<h4>Set up Google Photos</h4>
-  <p>One-time setup — about two minutes. Google requires each server to have
-  its own app credentials; after this, everyone just clicks "Connect".</p>
-  <ol>
-    <li>Open <a href="https://console.cloud.google.com/apis/credentials"
-      target="_blank">Google Cloud → Credentials</a> (create a project if
-      asked), then <b>Create Credentials → OAuth client ID → Web
-      application</b>.</li>
-    <li>Under <b>Authorized redirect URIs</b> add:<br><code>${cb}</code></li>
-    <li>If Google shows an "unverified app" warning later, add your email
-      under <b>OAuth consent screen → Test users</b>.</li>
-    <li>Paste the client ID and secret below:</li>
-  </ol>
-  <input id="gcid" placeholder="Client ID" size="60"><br>
-  <input id="gsec" placeholder="Client secret" size="60" type="password"><br>
-  <button onclick="saveGphotos()">Save</button>
-  <p id="gwmsg"></p>`;
-}
-async function saveGphotos(){
-  const cid=document.getElementById('gcid').value.trim();
-  const sec=document.getElementById('gsec').value.trim();
-  const r=await api('POST','/api/gphotos/setup',
-    {client_id:cid, client_secret:sec});
-  document.getElementById('gwmsg').textContent =
-    r.ok?'Saved — now connect your Google Photos below.':('Error: '+r.error);
+async function updClient(){
+  const cid=prompt('New OAuth client ID (xxxx.apps.googleusercontent.com):');
+  if(!cid) return;
+  const r=await api('PATCH','/api/account/client',{client_id:cid.trim()});
+  alert(r.ok?'Saved — sign out and sign back in with the new client.':'Error: '+r.error);
   if(r.ok) init();
+}
+async function setSrc(n){
+  const r=await api('POST','/api/source',{name:n});
+  if(!r.ok) alert('Error: '+r.error); init();
+}
+async function nextFrame(){
+  const r=await api('POST','/api/next');
+  if(!r.ok) alert('Error: '+r.error); init();
+}
+async function saveSecret(){
+  const sec=document.getElementById('gsec').value.trim();
+  const r=await api('POST','/api/gphotos/setup',{client_secret:sec});
+  document.getElementById('secmsg').textContent=
+    r.ok?'Saved — now connect below.':('Error: '+r.error);
+  if(r.ok) init();
+}
+async function gdisc(){
+  if(!confirm('Disconnect Google Photos? Cached photos stay until you pick again.'))return;
+  await api('POST','/api/gphotos/disconnect'); init();
 }
 async function upload(e,id){
   e.preventDefault();
@@ -1022,7 +1263,7 @@ async function gpick(){
   const r=await api('POST','/api/gphotos/pick');
   if(r.ok&&r.picker_uri) open(r.picker_uri,'_blank'); else alert('Error: '+r.error);
 }
-async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/login';}
+async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
 init();
 </script></body></html>"""
 
@@ -1066,8 +1307,7 @@ def main():
     # Cloud Run injects $PORT; local runs use config.json.
     port = int(os.environ.get("PORT", APP.cfg.get("port", 8765)))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"SpectraFrame server v2 on :{port} "
-          f"(frame {W}x{H}, etag {APP.etag})")
+    print(f"SpectraFrame server v2.1 on :{port} (frame {W}x{H})")
     srv.serve_forever()
 
 

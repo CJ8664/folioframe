@@ -23,7 +23,10 @@ services:
       - "8765:8765"
     environment:
       PORT: "8765"
-      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com","auth":{"provider":"google","client_id":"YOUR_CLIENT_ID.apps.googleusercontent.com","allowlist":["you@example.com"]},"source":"picsum"}'
+      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com","auth":{"allowlist":["you@example.com"]},"source":"picsum"}'
+      # No OAuth in the config: each user brings their own Google OAuth
+      # client via the welcome page. auth.allowlist is just an email list
+      # (empty = anyone may sign in; accounts are isolated per user).
     volumes:
       - spectra-data:/app/server/data
     restart: unless-stopped

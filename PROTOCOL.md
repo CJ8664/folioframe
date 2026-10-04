@@ -1,8 +1,13 @@
-# SpectraFrame Device ↔ Server Protocol v2
+# SpectraFrame Device ↔ Server Protocol v2.1
 
 Replaces v1. The anonymous `GET /frame` is **removed** — every device endpoint
 requires authentication, and every human endpoint requires a signed-in session.
 There is no unauthenticated path to any frame, photo, or device control.
+
+v2.1 change: **bring-your-own OAuth.** The admin configures zero OAuth. Each
+user brings their own Google OAuth client ID (one-time setup via the public
+welcome page); the server verifies ID tokens against the user's own client.
+Google Photos credentials, tokens, and photo cache are per-user and isolated.
 
 Small, versioned HTTP contract. Any server can feed the frame by implementing it.
 
@@ -13,11 +18,13 @@ Small, versioned HTTP contract. Any server can feed the frame by implementing it
 - Device credential: 256-bit random Bearer token, issued by the server at claim
   time, stored hashed (SHA-256) server-side. Sent as
   `Authorization: Bearer <token>` on every device request.
-- Human: Google account. The server verifies the Google ID token
-  (signature via Google JWKS, `aud` == our client ID, `iss` is Google,
-  `exp` not passed, `email_verified`), then mints an
+- Human: Google account, via the user's **own** OAuth client (bring-your-own;
+  entered once on the public welcome page). The server verifies the Google ID
+  token (signature via Google JWKS, `aud` == the user's client ID,
+  `iss` is Google, `exp` not passed, `email_verified`), then mints an
   `httpOnly` + `Secure` + `SameSite=Lax` session cookie. The Google `sub`
-  claim is the stable user key.
+  claim is the stable user key. The account is bound to the client ID it was
+  created with (rotatable from the account page).
 - **One device ↔ one user, strictly.** A device has exactly one owner at any
   time. Claiming an already-paired device fails unless the owner unpaired it
   first (or the device was factory-reset, which revokes its token).
@@ -106,12 +113,14 @@ wake. `404` with an empty queue is normal: keep image, sleep.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/login` | Google Identity Services button |
-| `POST` | `/api/auth/google` | `{id_token}` → session cookie |
+| `GET` | `/` | **public** welcome page (setup steps + sign-in); console when signed in |
+| `GET` | `/login` | redirects to `/` (kept for old bookmarks) |
+| `POST` | `/api/auth/token` | `{id_token, client_id}` → session cookie (client is the user's own) |
 | `POST` | `/api/auth/logout` | destroys session |
-| `GET` | `/` | console: my devices (login required) |
 | `GET` | `/claim` | enter a device claim code |
 | `GET` | `/api/session` | `{email, csrf}` for the console JS |
+| `GET` | `/api/account` | account: email, client ID, source, Photos state |
+| `PATCH` | `/api/account/client` | rotate the account's OAuth client ID |
 | `GET` | `/api/devices` | my devices + status |
 | `POST` | `/api/devices/claim` | `{code}` → claims device to me |
 | `PATCH` | `/api/devices/{id}` | rename |
@@ -119,6 +128,14 @@ wake. `404` with an empty queue is normal: keep image, sleep.
 | `POST` | `/api/devices/{id}/photos/upload` | multipart photo → **pinned override** (force push) |
 | `DELETE` | `/api/devices/{id}/photos/override` | clear override, resume assigned source |
 | `GET` | `/api/devices/{id}/preview` | PNG of what the device currently shows |
+| `POST` | `/api/gphotos/setup` | `{client_secret}` — the user's own (write-only) |
+| `GET` | `/api/gphotos/connect` | → Google consent (user's client; `?origin=` validated) |
+| `GET` | `/api/gphotos/callback` | OAuth callback (per-user, state-bound redirect) |
+| `GET` | `/api/gphotos/status` | per-user Photos state (secret never exposed) |
+| `POST` | `/api/gphotos/pick` | start a picker import (per user) |
+| `POST` | `/api/gphotos/disconnect` | revoke per-user Photos tokens |
+| `POST` | `/api/next` | rotate my devices' frames now |
+| `POST` | `/api/source` | `{name}` — set my photo source |
 
 ## Priority override ("force push")
 

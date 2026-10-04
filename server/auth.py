@@ -1,24 +1,41 @@
-"""Human authentication: Google sign-in + sessions + CSRF.
+"""Human authentication: Google sign-in (bring-your-own OAuth client) + sessions.
+
+Model: the admin deploys with ZERO OAuth configuration. Each user brings
+their own Google OAuth client ID -- created once in Google Cloud Console;
+the public welcome page (/) walks them through it. Sign-in verifies the
+Google ID token against the client ID the user supplied.
 
 Login flow (web console):
-  1. Browser gets a Google ID token via Google Identity Services (GIS).
-  2. POST /api/auth/google {id_token} -> server verifies the token
-     cryptographically (signature, aud, iss, exp) -- never trusts a
-     decoded-but-unverified JWT.
-  3. Server creates a session, sets an httpOnly+Secure+SameSite=Lax cookie.
+  1. Welcome page (public): user enters their OAuth client ID.
+  2. Browser gets a Google ID token via GIS initialized with that client ID.
+  3. POST /api/auth/token {id_token, client_id} -> server verifies the
+     token cryptographically (signature, aud == client_id, iss, exp,
+     email_verified) -- never trusts a decoded-but-unverified JWT.
+  4. Server get-or-creates the user record (keyed by Google `sub`) and
+     sets an httpOnly+Secure+SameSite=Lax session cookie.
+
+Everything beyond the welcome page requires a session.
 
 The Google `sub` claim is the stable user key. Email allowlist (config
-"auth": {"allowlist": [...]}) restricts who may sign in; empty/missing
-means any Google account (documented, single-user deployments should set it).
+"auth": {"allowlist": [...]}) optionally restricts who may sign in;
+empty/missing means anyone with a Google account may create an account --
+their data is isolated per user, so an open server leaks nothing across
+accounts. (This is not OAuth setup: just an email list.)
 """
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import time
 
 SESSION_COOKIE = "sf_session"
 SESSION_TTL = 24 * 3600  # seconds
+
+# Google OAuth web client IDs look like "<id>.apps.googleusercontent.com".
+CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$")
+
+TRUSTED_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 
 
 class AuthError(Exception):
@@ -36,32 +53,12 @@ def _default_verify(id_token_str, client_id):
         id_token_str, grequests.Request(), client_id)
 
 
-def _firebase_verify(id_token_str, project_id):
-    """Verify a Firebase Auth ID token via the Admin SDK (ADC on Cloud Run)."""
-    import firebase_admin
-    from firebase_admin import auth as fauth
-    try:
-        firebase_admin.get_app()
-    except ValueError:
-        firebase_admin.initialize_app()  # Application Default Credentials
-    return fauth.verify_id_token(id_token_str)
-
-
 class AuthManager:
     def __init__(self, store, config, verify_fn=None):
         self.store = store
         self.cfg = config.get("auth", {})
-        # provider: "google" (direct Google ID token, local dev) or
-        # "firebase" (Firebase Auth ID token, Cloud Run deployment)
-        self.provider = self.cfg.get("provider", "google")
-        self.client_id = (self.cfg.get("client_id")
-                          or config.get("google_photos", {}).get("client_id", ""))
-        self.project_id = (self.cfg.get("project_id")
-                           or config.get("firebase", {}).get("project_id", ""))
         self.allowlist = set(self.cfg.get("allowlist", []))
-        self._verify = verify_fn or (
-            _default_verify if self.provider == "google"
-            else (lambda tok, _cid: _firebase_verify(tok, self.project_id)))
+        self._verify = verify_fn or _default_verify
         self.secret = self._load_secret()
 
     def _load_secret(self):
@@ -81,32 +78,23 @@ class AuthManager:
         return secret
 
     # ---- ID token verification -----------------------------------------
-    def verify_id_token(self, id_token_str):
+    def verify_id_token(self, id_token_str, client_id):
         """Verify and return (sub, email, name). Raises AuthError.
 
-        provider "google": Google ID token, aud == our OAuth client ID.
-        provider "firebase": Firebase Auth ID token, aud == project ID.
+        client_id is the *user's own* OAuth client (bring-your-own model):
+        aud must equal it. The server holds no OAuth client of its own.
         """
-        if self.provider == "firebase":
-            if not self.project_id:
-                raise AuthError("server has no Firebase project_id configured")
-            expected_aud = self.project_id
-            issuers = (f"https://securetoken.google.com/{self.project_id}",)
-        else:
-            if not self.client_id:
-                raise AuthError(
-                    "server has no Google OAuth client_id configured")
-            expected_aud = self.client_id
-            issuers = ("accounts.google.com", "https://accounts.google.com")
+        if not client_id or not CLIENT_ID_RE.fullmatch(client_id):
+            raise AuthError("a valid Google OAuth client ID is required")
         try:
-            info = self._verify(id_token_str, expected_aud)
+            info = self._verify(id_token_str, client_id)
         except Exception as e:
             raise AuthError(f"token verification failed: {e}")
         # Defense in depth: assert the security-critical claims explicitly so
         # a verifier swap can't silently drop them.
-        if info.get("aud") != expected_aud:
+        if info.get("aud") != client_id:
             raise AuthError("token audience mismatch")
-        if info.get("iss") not in issuers:
+        if info.get("iss") not in TRUSTED_ISSUERS:
             raise AuthError("token issuer not trusted")
         if info.get("exp", 0) < time.time() - 60:
             raise AuthError("token expired")
@@ -119,10 +107,6 @@ class AuthManager:
         if self.allowlist and email not in self.allowlist:
             raise AuthError("account not on the allowlist")
         return sub, email, info.get("name", "")
-
-    # Backwards-compatible alias (pre-Firebase name).
-    def verify_google_token(self, id_token_str):
-        return self.verify_id_token(id_token_str)
 
     # ---- sessions ------------------------------------------------------
     def _sign(self, session_id):

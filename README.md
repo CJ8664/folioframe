@@ -55,11 +55,12 @@ unseen-first history, quiet hours, and ETag/304. Tests:
 
 ### Self-hosting
 
-The default configuration has **zero cloud dependencies**: the registry is a
-local JSON file, photo blobs live on local disk, and Google sign-in is
-verified directly against Google's keys (needs only a free OAuth client ID).
-Run it on any machine with Python 3.12+, or `docker build` the included
-`Dockerfile`. Firebase (Firestore, Cloud Storage, Firebase Auth, Cloud Run)
+The default configuration has **zero cloud dependencies and zero OAuth setup
+for the admin**: the registry is a local JSON file, photo blobs live on local
+disk, and each user signs in with Google using their **own** OAuth client ID
+(created once via the public welcome page; verified directly against Google's
+keys). Run it on any machine with Python 3.12+, or `docker build` the included
+`Dockerfile`. Firebase (Firestore, Cloud Storage, Cloud Run)
 is strictly opt-in via `firebase.project_id` — see `docs/FIREBASE.md`.
 Without it, no Firebase package is even imported.
 

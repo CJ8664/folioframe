@@ -12,7 +12,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from blobs import LocalBlobStore, GCSBlobStore
-from token_store import FileTokenStore, FirestoreTokenStore
+from token_store import FileTokenStore, StoreTokenStore
 from store import FirestoreStore
 from auth import AuthManager, AuthError
 
@@ -156,14 +156,18 @@ class TestTokenStores(unittest.TestCase):
         ts.clear()
         self.assertIsNone(ts.load())
 
-    def test_firestore_round_trip(self):
-        client = FakeFirestoreClient()
-        ts = FirestoreTokenStore(client)
+    def test_store_round_trip(self):
+        # Per-user tokens through the Store abstraction: one code path for
+        # JsonStore (local) and FirestoreStore (Cloud Run).
+        s = FirestoreStore(client=FakeFirestoreClient())
+        ts = StoreTokenStore(s, "user-1")
         self.assertIsNone(ts.load())
         ts.save({"refresh_token": "r"})
-        # second instance sees the same doc (persistence across restarts)
-        ts2 = FirestoreTokenStore(client)
+        # second instance sees the same entry (persistence across restarts)
+        ts2 = StoreTokenStore(s, "user-1")
         self.assertEqual(ts2.load()["refresh_token"], "r")
+        # per-user isolation
+        self.assertIsNone(StoreTokenStore(s, "user-2").load())
         ts.clear()
         self.assertIsNone(ts.load())
 
@@ -187,44 +191,6 @@ class TestFirestoreStore(unittest.TestCase):
         self.assertEqual(s.all("sessions"), {})
 
 
-class TestFirebaseAuthProvider(unittest.TestCase):
-    def _auth(self, claims):
-        def verify(token, expected_aud):
-            assert expected_aud == "test-project", expected_aud
-            if token != "fb-token":
-                raise ValueError("bad signature")
-            return dict(claims)
-        cfg = {"auth": {"provider": "firebase", "project_id": "test-project"},
-               "firebase": {"project_id": "test-project"}}
-        store = __import__("store").JsonStore(
-            os.path.join(tempfile.mkdtemp(), "r.json"))
-        return AuthManager(store, cfg, verify_fn=verify)
-
-    def test_happy_path(self):
-        claims = {"aud": "test-project",
-                  "iss": "https://securetoken.google.com/test-project",
-                  "exp": int(time.time()) + 3600, "sub": "fbuid1",
-                  "email": "c@example.com", "email_verified": True}
-        sub, email, _ = self._auth(claims).verify_id_token("fb-token")
-        self.assertEqual(sub, "fbuid1")
-
-    def test_wrong_audience_rejected(self):
-        claims = {"aud": "other-project",
-                  "iss": "https://securetoken.google.com/test-project",
-                  "exp": int(time.time()) + 3600, "sub": "x",
-                  "email": "c@example.com", "email_verified": True}
-        with self.assertRaises(AuthError):
-            self._auth(claims).verify_id_token("fb-token")
-
-    def test_forged_token_rejected(self):
-        claims = {"aud": "test-project",
-                  "iss": "https://securetoken.google.com/test-project",
-                  "exp": int(time.time()) + 3600, "sub": "x",
-                  "email": "c@example.com", "email_verified": True}
-        with self.assertRaises(AuthError):
-            self._auth(claims).verify_id_token("forged")
-
-
 class TestClientProvider(unittest.TestCase):
     def test_runtime_client_resolution(self):
         from sources.google_photos import GoogleOAuth, GPhotosController
@@ -240,12 +206,23 @@ class TestClientProvider(unittest.TestCase):
         from sources.google_photos import GPhotosController
         state = {}
         c = GPhotosController(
-            {}, 8765,
+            8765,
+            cache_dir=os.path.join(tempfile.mkdtemp(), "g"),
             client_provider=lambda: (state.get("cid", ""),
                                      state.get("sec", "")))
         self.assertFalse(c.configured)
         state.update(cid="a", sec="b")
         self.assertTrue(c.configured)
+
+    def test_oauth_state_round_trip(self):
+        from sources.google_photos import GPhotosController
+        c = GPhotosController(
+            8765, cache_dir=os.path.join(tempfile.mkdtemp(), "g2"))
+        uri = "https://frame.example.com/api/gphotos/callback"
+        s = c.new_state(uri)
+        self.assertEqual(c.pop_state(s), uri)   # single use
+        self.assertIsNone(c.pop_state(s))
+        self.assertIsNone(c.pop_state("bogus"))
 
 
 class TestServerEnvConfig(unittest.TestCase):

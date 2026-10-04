@@ -23,13 +23,18 @@ from devices import (DeviceRegistry, AlreadyPaired, BadClaim, RateLimiter,
 from store import JsonStore
 
 CLIENT_ID = "test-client.apps.googleusercontent.com"
+CLIENT_ID_2 = "second-client.apps.googleusercontent.com"
 
 
 def fake_verifier_factory(claims):
+    # claims: a single claims dict (token "good-token"), or
+    # {token: claims} for multi-user tests.
+    mapping = claims if "sub" not in claims else {"good-token": claims}
+
     def verify(token, client_id):
-        if token != "good-token":
+        if token not in mapping:
             raise ValueError("bad signature")
-        return dict(claims)
+        return dict(mapping[token])
     return verify
 
 
@@ -44,11 +49,22 @@ GOOD_CLAIMS = {
 }
 
 
+GOOD_CLAIMS_2 = {
+    "aud": CLIENT_ID_2,
+    "iss": "https://accounts.google.com",
+    "exp": int(time.time()) + 3600,
+    "sub": "google-sub-2",
+    "email": "aashna@example.com",
+    "email_verified": True,
+    "name": "Aashna",
+}
+
+
 def make_auth(claims=None, allowlist=None, tmp=None):
     store = JsonStore(os.path.join(tmp or tempfile.mkdtemp(),
                                    "registry.json"))
-    cfg = {"auth": {"client_id": CLIENT_ID,
-                    "allowlist": allowlist or []}}
+    # NOTE: no OAuth client in the config -- bring-your-own model.
+    cfg = {"auth": {"allowlist": allowlist or []}}
     return AuthManager(store, cfg,
                        verify_fn=fake_verifier_factory(claims or GOOD_CLAIMS))
 
@@ -57,42 +73,57 @@ class TestGoogleTokenVerification(unittest.TestCase):
     def test_forged_token_rejected(self):
         auth = make_auth()
         with self.assertRaises(AuthError):
-            auth.verify_google_token("forged-token")
+            auth.verify_id_token("forged-token", CLIENT_ID)
 
     def test_expired_token_rejected(self):
         claims = dict(GOOD_CLAIMS, exp=int(time.time()) - 3600)
         auth = make_auth(claims)
         with self.assertRaises(AuthError):
-            auth.verify_google_token("good-token")
+            auth.verify_id_token("good-token", CLIENT_ID)
 
     def test_wrong_audience_rejected(self):
         claims = dict(GOOD_CLAIMS, aud="evil.apps.googleusercontent.com")
         auth = make_auth(claims)
         with self.assertRaises(AuthError):
-            auth.verify_google_token("good-token")
+            auth.verify_id_token("good-token", CLIENT_ID)
 
     def test_wrong_issuer_rejected(self):
         claims = dict(GOOD_CLAIMS, iss="https://evil.example.com")
         auth = make_auth(claims)
         with self.assertRaises(AuthError):
-            auth.verify_google_token("good-token")
+            auth.verify_id_token("good-token", CLIENT_ID)
 
     def test_unverified_email_rejected(self):
         claims = dict(GOOD_CLAIMS, email_verified=False)
         auth = make_auth(claims)
         with self.assertRaises(AuthError):
-            auth.verify_google_token("good-token")
+            auth.verify_id_token("good-token", CLIENT_ID)
 
     def test_allowlist_enforced(self):
         auth = make_auth(allowlist=["someone-else@example.com"])
         with self.assertRaises(AuthError):
-            auth.verify_google_token("good-token")
+            auth.verify_id_token("good-token", CLIENT_ID)
 
     def test_happy_path(self):
         auth = make_auth()
-        sub, email, name = auth.verify_google_token("good-token")
+        sub, email, name = auth.verify_id_token("good-token", CLIENT_ID)
         self.assertEqual(sub, "google-sub-1")
         self.assertEqual(email, "chirag@example.com")
+
+    def test_client_id_required_and_validated(self):
+        auth = make_auth()
+        for bad in ("", "not-a-client", "evil.com",
+                    "x.apps.googleusercontent.com.evil.com"):
+            with self.assertRaises(AuthError):
+                auth.verify_id_token("good-token", bad)
+
+    def test_audience_must_equal_supplied_client(self):
+        # The token's aud must match the user-supplied client ID: a token
+        # minted for another client is rejected even if the signature is
+        # otherwise fine.
+        auth = make_auth()
+        with self.assertRaises(AuthError):
+            auth.verify_id_token("good-token", CLIENT_ID_2)
 
 
 class TestSessions(unittest.TestCase):
@@ -211,15 +242,17 @@ class TestHTTP(unittest.TestCase):
             os.path.join(imgdir, "a.jpg"))
         cfg_path = os.path.join(cls.tmp, "config.json")
         with open(cfg_path, "w") as f:
+            # NOTE: no OAuth anywhere in the admin config (bring-your-own).
             json.dump({"port": 0, "source": "folder",
                        "folder": {"dir": imgdir},
-                       "auth": {"client_id": CLIENT_ID, "allowlist": []}}, f)
+                       "auth": {"allowlist": []}}, f)
         spectra_server.APP = spectra_server.Server(
             config_path=cfg_path,
             state_path=os.path.join(cls.tmp, "state.json"),
             data_dir=os.path.join(cls.tmp, "data"))
-        # inject fake Google verifier
-        spectra_server.APP.auth._verify = fake_verifier_factory(GOOD_CLAIMS)
+        # inject fake Google verifier (two users for isolation tests)
+        spectra_server.APP.auth._verify = fake_verifier_factory(
+            {"good-token": GOOD_CLAIMS, "good-token-2": GOOD_CLAIMS_2})
         cls.srv = spectra_server.http.server.ThreadingHTTPServer(
             ("127.0.0.1", 0), spectra_server.Handler)
         cls.port = cls.srv.server_address[1]
@@ -243,21 +276,69 @@ class TestHTTP(unittest.TestCase):
         conn.close()
         return resp.status, hdrs, data
 
-    def login(self):
+    def login_as(self, token="good-token", client_id=CLIENT_ID):
         status, hdrs, data = self.req(
             "POST", "/api/auth/token",
-            body=json.dumps({"id_token": "good-token"}),
+            body=json.dumps({"id_token": token, "client_id": client_id}),
             headers={"Content-Type": "application/json"})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200, data[:200])
         j = json.loads(data)
         cookie = hdrs["Set-Cookie"].split(";")[0]
         return cookie, j["csrf"]
 
-    def test_console_requires_login(self):
-        status, _, _ = self.req("GET", "/")
+    def login(self):
+        return self.login_as()
+
+    def test_welcome_is_public_console_is_gated(self):
+        # The welcome page is the only public page.
+        status, _, data = self.req("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Get started", data)
+        self.assertIn(b"OAuth client ID", data)
+        # /login keeps old bookmarks working.
+        status, hdrs, _ = self.req("GET", "/login")
         self.assertEqual(status, 302)
+        self.assertEqual(hdrs["Location"], "/")
+        # Everything else needs a session.
         status, _, _ = self.req("GET", "/api/devices")
         self.assertEqual(status, 401)
+        status, _, _ = self.req("GET", "/claim")
+        self.assertEqual(status, 302)
+        # Signed in -> the console (account page).
+        cookie, _ = self.login()
+        status, _, data = self.req("GET", "/", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertIn(b"SpectraFrame console", data)
+
+    def test_login_requires_client_id(self):
+        for body in ({}, {"id_token": "good-token"},
+                      {"id_token": "good-token", "client_id": "bogus"}):
+            status, _, _ = self.req(
+                "POST", "/api/auth/token", body=json.dumps(body),
+                headers={"Content-Type": "application/json"})
+            self.assertEqual(status, 401, body)
+
+    def test_account_bound_to_its_client(self):
+        self.login()  # creates the account with CLIENT_ID
+        # A token for the same Google account but presented with a
+        # different client is rejected: the account is bound to the
+        # client it was created with.
+        reg = spectra_server.APP.store
+        user = reg.get("users", "google-sub-1")
+        user["oauth_client_id"] = CLIENT_ID_2
+        reg.put("users", "google-sub-1", user)
+        try:
+            status, _, data = self.req(
+                "POST", "/api/auth/token",
+                body=json.dumps({"id_token": "good-token",
+                                 "client_id": CLIENT_ID}),
+                headers={"Content-Type": "application/json"})
+            self.assertEqual(status, 401)
+            self.assertIn(b"different OAuth client", data)
+        finally:
+            # restore: later tests log in with CLIENT_ID
+            user["oauth_client_id"] = CLIENT_ID
+            reg.put("users", "google-sub-1", user)
 
     def test_forged_login_rejected(self):
         status, _, data = self.req(
@@ -413,11 +494,11 @@ class TestHTTP(unittest.TestCase):
             headers=h)
         self.assertEqual(status, 200)
 
-    def test_gphotos_setup_wizard(self):
+    def test_gphotos_per_user_setup(self):
         # unauthenticated -> 401
         status, _, _ = self.req(
             "POST", "/api/gphotos/setup",
-            body=json.dumps({"client_id": "a", "client_secret": "b"}),
+            body=json.dumps({"client_secret": "s"}),
             headers={"Content-Type": "application/json"})
         self.assertEqual(status, 401)
 
@@ -427,46 +508,97 @@ class TestHTTP(unittest.TestCase):
         # missing CSRF -> 403
         status, _, _ = self.req(
             "POST", "/api/gphotos/setup",
-            body=json.dumps({"client_id": "a", "client_secret": "b"}),
+            body=json.dumps({"client_secret": "s"}),
             headers={"Content-Type": "application/json", "Cookie": cookie})
         self.assertEqual(status, 403)
-        # missing fields -> 400
+        # missing secret -> 400
         status, _, _ = self.req("POST", "/api/gphotos/setup",
-                                body=json.dumps({"client_id": "a"}),
-                                headers=h)
+                                body=json.dumps({}), headers=h)
         self.assertEqual(status, 400)
-        # happy path: client saved, takes effect without restart
+        # A fresh second user: connect without a saved secret -> 400
+        # (not a redirect to Google).
+        cookie2, _ = self.login_as("good-token-2", CLIENT_ID_2)
+        status, _, _ = self.req(
+            "GET", "/api/gphotos/connect?origin=https://frame.example.com",
+            headers={"Cookie": cookie2})
+        self.assertEqual(status, 400)
+        # happy path: secret saved (client ID already on the account)
         status, _, data = self.req(
             "POST", "/api/gphotos/setup",
-            body=json.dumps({"client_id": "wizard-id",
-                             "client_secret": "wizard-secret"}),
+            body=json.dumps({"client_secret": "wizard-secret"}),
             headers=h)
         self.assertEqual(status, 200, data[:200])
-        self.assertTrue(spectra_server.APP.gphotos.configured)
-        # the secret is write-only: status never exposes it
+        # the secret is write-only: neither status nor account exposes it
+        for path in ("/api/gphotos/status", "/api/account"):
+            status, _, data = self.req("GET", path,
+                                       headers={"Cookie": cookie})
+            body = data.decode()
+            self.assertNotIn("wizard-secret", body)
+            self.assertNotIn("client_secret", body)
         status, _, data = self.req("GET", "/api/gphotos/status",
                                    headers={"Cookie": cookie})
-        body = data.decode()
-        self.assertNotIn("wizard-secret", body)
-        self.assertNotIn("client_secret", body)
-        self.assertIn('"configured": true', body)
-        # bootstrap closed: with an empty allowlist, only the first
-        # setup (above) is permitted
-        status, _, _ = self.req(
-            "POST", "/api/gphotos/setup",
-            body=json.dumps({"client_id": "x", "client_secret": "y"}),
-            headers=h)
-        self.assertEqual(status, 403)
+        j = json.loads(data)
+        self.assertTrue(j["secret_saved"])
+        self.assertFalse(j["connected"])
+        self.assertEqual(j["client_id"], CLIENT_ID)
+        # per-user isolation: a second user's Photos are untouched
+        cookie2, _ = self.login_as("good-token-2", CLIENT_ID_2)
+        status, _, data = self.req(
+            "GET", "/api/gphotos/status", headers={"Cookie": cookie2})
+        j2 = json.loads(data)
+        self.assertFalse(j2["secret_saved"])
+        self.assertEqual(j2["client_id"], CLIENT_ID_2)
 
-    def test_gphotos_setup_allowlist_rule(self):
-        srv = spectra_server.APP
-        old = srv.auth.allowlist
-        srv.auth.allowlist = {"chirag@example.com"}
+    def test_connect_origin_validated(self):
+        cookie, csrf = self.login()
+        h = {"Cookie": cookie, "X-CSRF-Token": csrf}
+        self.req("POST", "/api/gphotos/setup",
+                 body=json.dumps({"client_secret": "s"}), headers={
+                     "Content-Type": "application/json", **h})
+        # An https origin is passed through (302): Google itself refuses to
+        # redirect to a URI the user never registered for their client, so
+        # Google's registered-redirect-URI check is the enforcement point.
+        status, hdrs, _ = self.req(
+            "GET", "/api/gphotos/connect?origin=https://evil.example.com",
+            headers={"Cookie": cookie})
+        self.assertEqual(status, 302)
+        self.assertIn("https://accounts.google.com/",
+                      hdrs.get("Location", ""))
+        # ...but malformed / insecure origins are rejected outright.
+        for bad in ("javascript:alert(1)", "http://192.168.1.5:8765",
+                    "notaurl", ""):
+            status, _, _ = self.req(
+                "GET", "/api/gphotos/connect?origin=" + bad,
+                headers={"Cookie": cookie})
+            self.assertEqual(status, 400, bad)
+        # localhost http is allowed (local dev).
+        status, _, _ = self.req(
+            "GET", "/api/gphotos/connect?origin=http://localhost:8765",
+            headers={"Cookie": cookie})
+        self.assertEqual(status, 302)
+
+    def test_account_client_rotation_validated(self):
+        cookie, csrf = self.login()
+        h = {"Content-Type": "application/json", "Cookie": cookie,
+             "X-CSRF-Token": csrf}
+        # bad format -> 400
+        status, _, _ = self.req(
+            "PATCH", "/api/account/client",
+            body=json.dumps({"client_id": "not-a-client"}), headers=h)
+        self.assertEqual(status, 400)
+        # good format -> 200 and stored
+        status, _, _ = self.req(
+            "PATCH", "/api/account/client",
+            body=json.dumps({"client_id": CLIENT_ID_2}), headers=h)
         try:
-            self.assertTrue(srv.can_setup_photos("chirag@example.com"))
-            self.assertFalse(srv.can_setup_photos("stranger@example.com"))
+            self.assertEqual(status, 200)
+            user = spectra_server.APP.store.get("users", "google-sub-1")
+            self.assertEqual(user["oauth_client_id"], CLIENT_ID_2)
         finally:
-            srv.auth.allowlist = old
+            # restore for later tests
+            user = spectra_server.APP.store.get("users", "google-sub-1")
+            user["oauth_client_id"] = CLIENT_ID
+            spectra_server.APP.store.put("users", "google-sub-1", user)
 
     def test_legacy_anonymous_frame_is_gone(self):
         status, _, _ = self.req("GET", "/frame")

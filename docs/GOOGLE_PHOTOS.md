@@ -3,18 +3,18 @@
 The server pulls your photos through Google's **Picker API** — a
 Google-hosted photo picker where you choose which photos the frame may use.
 
-## Honest limits (read first)
+## Model: bring your own OAuth client
 
-- **Manual pick, not live album sync.** Google removed third-party
-  full-library access on March 31, 2025. No app — ours or anyone's — can
-  "sync my album" anymore through the official API. You pick photos once
-  (or whenever you want more); the server caches originals locally and the
-  frame rotates from that cache.
-- Picked download URLs expire after ~1 hour; the server downloads originals
-  immediately, so this doesn't matter after import.
-- Sessions expire if you don't finish picking; just start a new pick.
+The admin configures **no** OAuth. Each user creates one Google OAuth
+client (once, ~5 minutes) and uses it for both sign-in and Photos. Your
+client secret, tokens, and photo cache are yours alone — never shared
+with other accounts on the same server.
 
-## One-time Google Cloud setup (5 minutes)
+## One-time Google Cloud setup (5 minutes, per user)
+
+You do steps 1–4 **before** signing in — the welcome page walks you
+through them and shows the exact redirect URI for the deployment
+(`<this-site>/api/gphotos/callback`).
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
    create a project (any name, e.g. `spectra-frame`).
@@ -27,33 +27,40 @@ Google-hosted photo picker where you choose which photos the frame may use.
      (Publishing the app removes this step but requires verification.)
 4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
    - Application type: **Web application**
-   - Authorized redirect URIs: add `<your-public-url>/api/gphotos/callback`
-     (the wizard in the console shows the exact value for your install;
-     `http://localhost:8765/api/gphotos/callback` for local dev)
-5. Copy the **Client ID** and **Client secret**.
+   - Authorized redirect URIs: add the URI shown on the welcome page
+     (`http://localhost:8765/api/gphotos/callback` for local dev)
+5. Copy the **Client ID** — paste it on the welcome page and sign in.
 
-## Connect the server
+## Connect Photos (after sign-in)
 
-1. Sign into the web console and open the **Google Photos** section — a
-   setup wizard walks you through it: it shows the exact redirect URI to
-   register and takes the client ID + secret. They're stored server-side
-   (never in a config file, never shown again) and take effect immediately,
-   no restart.
-   - Manual fallback: put `"google_photos": {"client_id": "...",
-     "client_secret": "..."}` in `server/config.json` instead.
-2. Click **Connect Google Photos** and approve the consent screen. Tokens
-   are stored with mode `0600` (local file) or in Firestore (Firebase).
-4. Click **Pick more photos** → open the picker link → select photos → Done.
-   The server polls, downloads originals into `server/data/gphotos/`, and
-   the `google_photos` source rotates from that cache.
-5. Switch the active source to `google_photos` in the web UI.
+1. Open your **account page** (the console). Under Google Photos you'll see
+   your sign-in client ID — paste that client's **client secret** and save.
+   (Write-only: it's stored server-side and never shown again.)
+2. Click **Connect Google Photos** and approve the consent screen.
+3. Click **Pick more photos** → open the picker link → select photos → Done.
+   The server polls, downloads originals into your private cache, and your
+   `google_photos` source rotates from it (unseen-first).
+4. Switch your photo source to `google_photos` in the console.
+
+## Honest limits (read first)
+
+- **Manual pick, not live album sync.** Google removed third-party
+  full-library access on March 31, 2025. No app — ours or anyone's — can
+  "sync my album" anymore through the official API. You pick photos once
+  (or whenever you want more); the server caches originals locally and the
+  frame rotates from that cache.
+- Picked download URLs expire after ~1 hour; the server downloads originals
+  immediately, so this doesn't matter after import.
+- Sessions expire if you don't finish picking; just start a new pick.
+
 
 ## Headless servers
 
-The OAuth callback goes to `localhost:<port>` **of the machine whose browser
-you use**. If the server runs on another box (Pi, NAS), either open the web
-UI in a browser on that box, or forward the port over SSH:
-`ssh -L 8765:localhost:8765 pi@your-server`.
+The OAuth redirect URI is derived from the address **your browser** uses to
+open the console (`location.origin`), and the welcome page shows it to you.
+If the server runs on another box, open the console via an address your
+browser can reach (LAN IP, Tailscale name, or public URL) and register that
+origin's `/api/gphotos/callback` — no SSH tunnel needed.
 
 ## Disconnect
 

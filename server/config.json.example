@@ -1,10 +1,9 @@
 {
+  "_note": "No OAuth anywhere in this file. The admin deploys; each user brings their own Google OAuth client via the welcome page (sign-in + Photos). auth.allowlist optionally restricts which Google accounts may sign in (empty = anyone; accounts are isolated per user).",
   "auth": {
     "allowlist": [
       "you@example.com"
-    ],
-    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
-    "provider": "google"
+    ]
   },
   "dashboard": {
     "lat": 36.17,
@@ -27,6 +26,5 @@
   "source": "picsum",
   "url": {
     "template": "https://picsum.photos/seed/{seed}/1200/1600"
-  },
-  "_note": "Google Photos OAuth client is set up in the console wizard after first login (no config needed)."
+  }
 }

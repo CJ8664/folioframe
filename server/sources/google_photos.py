@@ -93,10 +93,10 @@ class GoogleOAuth:
         return csecret
 
     # -- authorization -------------------------------------------------
-    def auth_url(self, state):
+    def auth_url(self, state, redirect_uri=None):
         q = urllib.parse.urlencode({
             "client_id": self._cid(),
-            "redirect_uri": self.redirect_uri,
+            "redirect_uri": redirect_uri or self.redirect_uri,
             "response_type": "code",
             "scope": SCOPE,
             "access_type": "offline",   # get a refresh token
@@ -105,12 +105,12 @@ class GoogleOAuth:
         })
         return AUTH_URL + "?" + q
 
-    def exchange_code(self, code):
+    def exchange_code(self, code, redirect_uri=None):
         body = urllib.parse.urlencode({
             "code": code,
             "client_id": self._cid(),
             "client_secret": self._csecret(),
-            "redirect_uri": self.redirect_uri,
+            "redirect_uri": redirect_uri or self.redirect_uri,
             "grant_type": "authorization_code",
         }).encode()
         status, raw = self._http(
@@ -336,48 +336,83 @@ class GooglePhotosSource(Source):
 
 
 class GPhotosController:
-    """Owns OAuth + picker state for the server (one user's account)."""
+    """Owns OAuth + picker state + photo source for ONE user's account.
 
-    def __init__(self, cfg, port, http=_http, token_store=None,
-                 blob_store=None, public_url=None, client_provider=None):
-        g = cfg.get("google_photos", {})
-        here = os.path.dirname(os.path.abspath(__file__))
-        token_path = os.path.join(here, "..", ".gphotos_token.json")
-        redirect_uri = g.get("redirect_uri") or (
-            (public_url.rstrip("/") if public_url
-             else f"http://localhost:{port}") + "/api/gphotos/callback")
-        # Credentials resolve at call time: the in-console setup wizard can
-        # save them to the store without a restart; config.json is fallback.
-        self._cfg_client = (g.get("client_id", ""), g.get("client_secret", ""))
-        self._client_provider = client_provider or (lambda: self._cfg_client)
+    Bring-your-own-OAuth model: the client ID/secret belong to the user
+    (resolved per call via client_provider), tokens are stored per user,
+    and the photo cache is namespaced per user (blob prefix / cache dir).
+    The server holds no Photos credentials of its own.
+    """
+
+    def __init__(self, port, http=_http, token_store=None,
+                 blob_store=None, blob_prefix="gphotos/", cache_dir=None,
+                 public_url=None, client_provider=None,
+                 store=None, states_key="gphotos_oauth_states"):
+        self.redirect_uri = ((public_url.rstrip("/") if public_url
+                              else f"http://localhost:{port}")
+                             + "/api/gphotos/callback")
+        self._client_provider = client_provider or (lambda: ("", ""))
         self.oauth = GoogleOAuth(
-            redirect_uri=redirect_uri, token_path=token_path, http=http,
+            redirect_uri=self.redirect_uri, token_path="", http=http,
             token_store=token_store, client_provider=self._client_provider)
         self.blob_store = blob_store
-        self.blob_prefix = "gphotos/"
+        self.blob_prefix = blob_prefix
+        self.cache_dir = cache_dir or default_cache_dir()
         self._http = http
-        self._states = {}  # oauth state -> timestamp
+        # OAuth states: persisted in the store when available so the
+        # callback survives a restart / lands on another Cloud Run
+        # instance; in-memory otherwise (tests, minimal setups).
+        self._state_store = store
+        self._states_key = states_key
+        self._mem_states = {} if store is None else None
         self.pick_state = None  # {session_id, picker_uri, status, count, error}
+        self.source = GooglePhotosSource({
+            "blob_store": blob_store,
+            "blob_prefix": blob_prefix,
+            "cache_dir": self.cache_dir,
+        })
 
     @property
     def configured(self):
         cid, csec = self._client_provider()
         return bool(cid and csec)
 
-    def new_state(self):
+    # -- oauth states --------------------------------------------------
+    def _load_states(self):
+        if self._mem_states is not None:
+            return dict(self._mem_states)
+        return dict(self._state_store.get("_service", self._states_key) or {})
+
+    def _save_states(self, states):
+        now = time.time()
+        states = {s: i for s, i in states.items()
+                  if now - i.get("ts", 0) < 600}
+        if self._mem_states is not None:
+            self._mem_states = states
+        else:
+            self._state_store.put("_service", self._states_key, states)
+
+    def new_state(self, redirect_uri):
+        """Create an OAuth state bound to the exact redirect URI used."""
         s = secrets.token_urlsafe(16)
-        self._states[s] = time.time()
+        states = self._load_states()
+        states[s] = {"ts": time.time(), "redirect_uri": redirect_uri}
+        self._save_states(states)
         return s
 
-    def valid_state(self, s):
-        ts = self._states.pop(s, None)
-        return ts is not None and time.time() - ts < 600
+    def pop_state(self, s):
+        """Consume a state; returns its redirect URI, or None if invalid."""
+        states = self._load_states()
+        info = states.pop(s, None)
+        self._save_states(states)
+        if not info or time.time() - info.get("ts", 0) >= 600:
+            return None
+        return info.get("redirect_uri")
 
     def cache_count(self):
         if self.blob_store is not None:
             return len(self.blob_store.list(self.blob_prefix))
-        d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                         "..", "data", "gphotos")
+        d = self.cache_dir
         if not os.path.isdir(d):
             return 0
         return len([f for f in os.listdir(d)

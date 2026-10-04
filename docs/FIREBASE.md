@@ -6,11 +6,12 @@ Production topology:
   web console). Built from `Dockerfile` at repo root.
 - **Firebase Hosting**: `https://<project>.web.app` rewrites everything to
   Cloud Run (`firebase.json`).
-- **Firebase Authentication**: Google sign-in. Console uses the Firebase JS
-  SDK; the service verifies ID tokens with the Admin SDK.
-- **Firestore**: users, devices, sessions, rotation state
-  (`firestore.rules` denies all direct client access — server only).
-- **Cloud Storage**: override frames/previews + Google Photos cache
+- **Sign-in**: direct Google ID-token verification (bring-your-own OAuth
+  client per user, via the welcome page). **No Firebase Authentication
+  setup needed** -- the admin configures zero OAuth.
+- **Firestore**: users, devices, sessions, rotation state, per-user Photos
+  tokens (`firestore.rules` denies all direct client access — server only).
+- **Cloud Storage**: override frames/previews + per-user Google Photos cache
   (`storage.rules` denies all direct client access — server only).
 
 ## Why Blaze is required
@@ -32,10 +33,8 @@ anything real accrues.
 4. Firestore: Build → Firestore Database → Create database → `us-west1`,
    Native mode, then deploy the locked-down rules below.
 5. Storage: Build → Storage → Get started → `us-west1`, then deploy rules.
-6. Authentication: Build → Authentication → Get started → enable the
-   **Google** sign-in provider.
-7. Note the web config: Project settings → General → Your apps → Web app →
-   copy `apiKey`, `authDomain`, `projectId`, `appId`.
+   (No Authentication setup: sign-in is direct Google ID-token verification
+   with each user's own OAuth client -- see the welcome page.)
 
 ## Deploy (from a machine with firebase-tools + gcloud)
 
@@ -74,36 +73,27 @@ gcloud run deploy spectraframe --source . --region=us-west1 \
   "firebase": {
     "project_id": "<project-id>",
     "storage_bucket": "<project-id>.appspot.com",
-    "public_url": "https://<project-id>.web.app",
-    "web": {
-      "apiKey": "<from step 7>",
-      "authDomain": "<project-id>.firebaseapp.com",
-      "projectId": "<project-id>",
-      "appId": "<from step 7>"
-    }
+    "public_url": "https://<project-id>.web.app"
   },
   "auth": {
-    "provider": "firebase",
-    "project_id": "<project-id>",
     "allowlist": ["er.chiragjain92@gmail.com"]
   }
 }
 ```
 
-The Google Photos OAuth client is set up from the console after first login
-(setup wizard) — it is not part of this JSON. If you prefer config files,
-`google_photos: {client_id, client_secret}` remains a supported fallback.
+No OAuth anywhere in this JSON: the admin deploys; each user brings their
+own Google OAuth client via the welcome page (sign-in + Photos, per user).
 
 Notes:
 
-- `auth.allowlist`: empty = any Google account may sign in. The value above
-  restricts the console to Chirag only (recommended until the account policy
-  decision in SYSTEM_PLAN.md §7 is settled).
-- `google_photos` OAuth client must be a **Web** client whose authorized
-  redirect URI includes `https://<project-id>.web.app/api/gphotos/callback`
-  (the service derives this from `public_url` automatically).
-- The Firebase **web API key** is public by design; real security comes from
-  Auth + the deny-all Firestore/Storage rules, all enforced server-side.
+- `auth.allowlist`: empty = any Google account may create an account (each
+  account's devices, Photos, and tokens are isolated per user). The value
+  above restricts sign-in to Chirag only.
+- Each user's Photos OAuth client must be a **Web** client whose authorized
+  redirect URIs include `https://<project-id>.web.app/api/gphotos/callback`
+  (the welcome page shows the exact URI for the deployment).
+- The deny-all Firestore/Storage rules stand: all data access is
+  server-side, behind the user's session.
 
 ## Recommended: GitHub Actions deploy (mirrors pregnancy-super-app)
 
