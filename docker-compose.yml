@@ -23,7 +23,12 @@ services:
       - "8765:8765"
     environment:
       PORT: "8765"
-      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com","auth":{"allowlist":["you@example.com"]},"source":"picsum"}'
+      # Config comes from the SPECTRA_CONFIG_JSON env var (set in Portainer's
+      # stack environment variables). ${...} substitution is how Portainer
+      # passes UI env vars into containers for git-based stacks.
+      SPECTRA_CONFIG_JSON: ${SPECTRA_CONFIG_JSON}
+      # Example for local `docker compose up` with a config file instead:
+      # SPECTRA_CONFIG_JSON: '{"public_url":"https://frame.example.com","auth":{"allowlist":["you@example.com"]},"google":{"client_id":"...","client_secret":"..."},"source":"picsum"}'
       # The service's own Google OAuth client (admin-configured once under
       # "google" in the JSON). Users just click Sign in with Google.
       # auth.allowlist is just an email list
