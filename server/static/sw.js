@@ -1,5 +1,5 @@
 /* SpectraFrame service worker: app-shell caching + offline fallback. */
-const CACHE = "spectraframe-v1";
+const CACHE = "spectraframe-v2";
 const SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -25,8 +25,11 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
-  // API calls always go to the network.
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/v1/")) return;
+  // API calls, device endpoints, and the firmware flasher always go to the
+  // network. /flash/* must never be served from cache: a stale cached
+  // manifest or firmware binary would silently flash an outdated build.
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/v1/") ||
+      url.pathname.startsWith("/flash")) return;
   e.respondWith(
     (async () => {
       // Navigations: network first, fall back to the cached shell offline.
