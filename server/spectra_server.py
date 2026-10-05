@@ -1641,7 +1641,26 @@ esp-web-install-button{--esp-tools-button-color:var(--blue);
   border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);
   color:inherit;font-size:1em}
 #console-wrap{min-height:300px}
-#console-wrap ewt-install-dialog{display:block;width:100%}
+#console-wrap ewt-install-dialog{display:block;width:100%;border-radius:14px;
+  overflow:hidden;color-scheme:dark;
+  /* Dark-theme the Material install dialog so it reads as part of the
+     page instead of a popup (tokens pierce its shadow DOM). */
+  --md-sys-color-surface:#141a30;
+  --md-sys-color-on-surface:#f4f6ff;
+  --md-sys-color-on-surface-variant:rgba(240,244,255,.68);
+  --md-sys-color-primary:#0a84ff;
+  --md-sys-color-on-primary:#ffffff;
+  --md-sys-color-primary-container:rgba(10,132,255,.30);
+  --md-sys-color-on-primary-container:#f4f6ff;
+  --md-sys-color-secondary-container:rgba(10,132,255,.18);
+  --md-sys-color-on-secondary-container:#f4f6ff;
+  --md-sys-color-tertiary:#5e5ce6;
+  --md-sys-color-tertiary-container:rgba(94,92,230,.30);
+  --md-sys-color-surface-container:rgba(255,255,255,.06);
+  --md-sys-color-surface-container-highest:rgba(255,255,255,.10);
+  --md-sys-color-error:#ff453a;
+  --md-sys-color-on-error-container:#ffd7d2;
+  --md-sys-color-shadow:#000}
 .parts{width:100%;border-collapse:collapse;font-size:.85em}
 .parts th,.parts td{padding:6px 8px;text-align:left;
   border-bottom:1px solid rgba(255,255,255,.08)}
