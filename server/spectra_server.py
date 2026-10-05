@@ -319,7 +319,8 @@ class Server:
             raise RuntimeError(f"source {name}: no items")
         img = src.load(item)
         frame = pipeline.process_image(img, W, H,
-                                       self.cfg.get("dither", "floyd"))
+                                       self.cfg.get("dither", "floyd"),
+                                       self.cfg.get("tone"))
         self._frames[dev["device_id"]] = {
             "frame": frame,
             "etag": pipeline.frame_etag(frame),
@@ -401,7 +402,8 @@ class Server:
     def set_override(self, device_id, img):
         """Pin an uploaded PIL image as this device's frame. Returns etag."""
         frame = pipeline.process_image(img, W, H,
-                                       self.cfg.get("dither", "floyd"))
+                                       self.cfg.get("dither", "floyd"),
+                                       self.cfg.get("tone"))
         etag = pipeline.frame_etag(frame)
         self.blobs.put(f"devices/{device_id}/override.frame", frame,
                        "application/octet-stream")

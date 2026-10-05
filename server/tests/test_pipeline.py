@@ -78,5 +78,110 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(loaded.size, (60, 100))
 
 
+class TestToneAndDrc(unittest.TestCase):
+    def test_tone_keeps_geometry(self):
+        img = solid((100, 120, 140), 32, 24)
+        out = pipeline.apply_tone(img, {"saturation": 1.5, "contrast": 1.2,
+                                        "exposure": 0.5})
+        self.assertEqual(out.size, (32, 24))
+        self.assertEqual(out.mode, "RGB")
+
+    def test_tone_exposure_brightens(self):
+        img = solid((100, 100, 100), 8, 8)
+        out = pipeline.apply_tone(img, {"exposure": 1.0})
+        self.assertGreater(out.getpixel((0, 0))[0], 150)
+
+    def test_drc_off_is_identity(self):
+        img = solid((90, 140, 200), 16, 16)
+        out = pipeline.apply_drc(img, {"drc": "off"})
+        self.assertEqual(list(out.getdata()), list(img.getdata()))
+
+    def test_drc_compresses_into_palette_range(self):
+        # black->white gradient: after display DRC the lightness must sit
+        # inside the palette's measured luminance range.
+        grad = Image.new("RGB", (64, 16))
+        grad.putdata([(v, v, v) for v in range(256) for _ in range(4)])
+        out = pipeline.apply_drc(grad, {"drc": "display", "drc_strength": 1.0,
+                                        "preserve_white": False})
+        Ls = [pipeline._palette_lab_lightness(px)
+              for px in out.getdata()][::16]
+        blackL = min(pipeline._PALETTE_LS)
+        whiteL = max(pipeline._PALETTE_LS)
+        for L in Ls:
+            self.assertGreaterEqual(L, blackL - 3)
+            self.assertLessEqual(L, whiteL + 3)
+
+    def test_drc_preserve_white(self):
+        img = solid((250, 250, 248), 16, 16)
+        out = pipeline.apply_drc(img, {"drc": "display", "drc_strength": 1.0,
+                                       "preserve_white": True})
+        L = pipeline._palette_lab_lightness(out.getpixel((0, 0)))
+        self.assertGreaterEqual(L, pipeline._PALETTE_WHITE_L - 2)
+
+    def test_drc_auto_mode(self):
+        img = solid((120, 130, 140), 16, 16)
+        out = pipeline.apply_drc(img, {"drc": "auto", "drc_strength": 0.9})
+        self.assertEqual(out.size, (16, 16))
+
+
+class TestCoverageOrdered(unittest.TestCase):
+    def test_solid_white(self):
+        out = pipeline.dither_ordered(solid((255, 255, 255)))
+        self.assertEqual(set(out), {0x0})
+
+    def test_solid_black(self):
+        out = pipeline.dither_ordered(solid((0, 0, 0)))
+        self.assertEqual(set(out), {0xF})
+
+    def test_mid_gray_reconstructs_tone(self):
+        # Coverage dither's invariant: the LOCAL AVERAGE of the chosen
+        # inks reconstructs the target (it solves for mixture proportions,
+        # it does not snap to nearest). For mid-gray the tightest-variance
+        # tetrahedron is chromatic -- every pixel stays near the target
+        # brightness, which speckles less than a black/white checkerboard.
+        out = pipeline.dither_ordered(solid((128, 128, 128), 64, 64))
+        s = set(out)
+        self.assertTrue(s <= pipeline.VALID_NIBBLES)
+        self.assertGreater(len(s), 1)
+        lin = pipeline._SRGB2LIN
+        lum = {n: lin[r] * 0.2126 + lin[g] * 0.7152 + lin[b] * 0.0722
+               for n, (r, g, b) in pipeline.PALETTE}
+        avg = sum(lum[n] for n in out) / len(out)
+        self.assertAlmostEqual(avg, float(lin[128]), delta=0.03)
+
+    def test_primary_red_uses_red_ink(self):
+        out = pipeline.dither_ordered(solid((220, 30, 30), 32, 32))
+        self.assertIn(0x6, set(out))
+
+    def test_full_frame_size(self):
+        img = Image.new("RGB", (300, 200), (90, 140, 200))
+        out = pipeline.dither_ordered(img)
+        self.assertEqual(len(out), 300 * 200)
+        self.assertTrue(all(n in pipeline.VALID_NIBBLES for n in out))
+
+
+class TestProcessImageWithTone(unittest.TestCase):
+    def test_full_frame_with_tone(self):
+        img = Image.new("RGB", (800, 600), (90, 140, 200))
+        frame = pipeline.process_image(img, 1200, 1600, "floyd",
+                                       {"saturation": 1.2, "drc": "display"})
+        self.assertEqual(len(frame), 960000)
+
+    def test_full_frame_ordered_with_tone(self):
+        img = Image.new("RGB", (800, 600), (90, 140, 200))
+        frame = pipeline.process_image(img, 1200, 1600, "ordered",
+                                       {"saturation": 1.2, "drc": "display"})
+        self.assertEqual(len(frame), 960000)
+        nibbles = [n for px in frame for n in (px >> 4, px & 0xF)]
+        self.assertTrue(all(n in pipeline.VALID_NIBBLES for n in nibbles))
+
+    def test_process_bytes_entry(self):
+        img = Image.new("RGB", (64, 48), (200, 100, 50))
+        buf = __import__("io").BytesIO()
+        img.save(buf, "PNG")
+        frame = pipeline.process(buf.getvalue(), 120, 160)
+        self.assertEqual(len(frame), 120 * 160 // 2)
+
+
 if __name__ == "__main__":
     unittest.main()

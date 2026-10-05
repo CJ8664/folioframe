@@ -573,15 +573,23 @@ class TestHTTP(unittest.TestCase):
 
     def test_flash_page_is_public_without_binaries(self):
         # No login: /flash explains that nothing is published yet.
-        status, _, data = self.req("GET", "/flash")
-        self.assertEqual(status, 200)
-        self.assertIn(b"No firmware published", data)
-        self.assertNotIn(b"<esp-web-install-button", data)
-        # manifest + binaries 404 cleanly
-        for path in ("/flash/manifest.json", "/flash/firmware.bin",
-                     "/flash/bootloader.bin", "/flash/evil.bin"):
-            status, _, _ = self.req("GET", path)
-            self.assertEqual(status, 404, path)
+        # Point FW_DIR at an empty dir so the test is hermetic even when
+        # real binaries are packaged in the repo.
+        tmp = tempfile.mkdtemp()
+        old = spectra_server.FW_DIR
+        spectra_server.FW_DIR = tmp
+        try:
+            status, _, data = self.req("GET", "/flash")
+            self.assertEqual(status, 200)
+            self.assertIn(b"No firmware published", data)
+            self.assertNotIn(b"<esp-web-install-button", data)
+            # manifest + binaries 404 cleanly
+            for path in ("/flash/manifest.json", "/flash/firmware.bin",
+                         "/flash/bootloader.bin", "/flash/evil.bin"):
+                status, _, _ = self.req("GET", path)
+                self.assertEqual(status, 404, path)
+        finally:
+            spectra_server.FW_DIR = old
 
     def test_flash_manifest_and_binaries_when_published(self):
         tmp = tempfile.mkdtemp()
