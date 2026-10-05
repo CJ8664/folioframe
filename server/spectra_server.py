@@ -618,7 +618,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/flash":
             self._send(200, "text/html", _flash_page(
                 APP.flash_available(),
-                APP.fw_version()).encode())
+                APP.fw_version()).encode(),
+                {"Cache-Control": "no-store"})
             return
 
         if p == "/flash/manifest.json":
@@ -650,8 +651,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(404, {"ok": False, "error": "not found"})
                 return
             with open(path, "rb") as f:
+                # Never cache firmware binaries: a stale cached binary would
+                # silently flash an outdated build (seen with 2.0.0 vs 3.0.0).
                 self._send(200, "application/octet-stream", f.read(),
-                           {"Cache-Control": "public, max-age=3600"})
+                           {"Cache-Control": "no-store"})
             return
 
         if p == "/sw.js":
