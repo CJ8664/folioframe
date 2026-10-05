@@ -49,7 +49,7 @@ def _sanitize_heartbeat(info):
     """
     out = {}
     for key, lo, hi in (("battery_mv", 0, 6000), ("battery_pct", 0, 100),
-                        ("rssi", -120, 0)):
+                        ("rssi", -120, 0), ("fw_build", 0, 999999)):
         if info.get(key) is None:
             continue
         try:

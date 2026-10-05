@@ -24,8 +24,8 @@
 #include "hal/Gdeb0709e01Panel.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "3.1.0"
-#define FW_BUILD 4
+#define FW_VERSION "3.2.0"
+#define FW_BUILD 5
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -207,6 +207,9 @@ void setup() {
   // paired server serves version + binary, authenticated like frames.
   const char* otaServer = s.otaBase[0] ? s.otaBase : s.serverUrl;
   const char* otaToken = s.otaBase[0] ? "" : token.c_str();
+  // Report telemetry first so the console shows this device's firmware
+  // version even if the OTA or fetch below fails.
+  deviceClient.sendStatus(token.c_str(), FW_BUILD);
   if (ota.checkAndInstall(otaServer, otaToken, FW_BUILD)) {
     Serial.println("OTA installed, rebooting");
     ESP.restart();

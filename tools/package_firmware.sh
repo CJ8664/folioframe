@@ -47,6 +47,13 @@ if [ -n "$FW_VERSION" ]; then
 else
   echo "warning: could not extract FW_VERSION from src/main.cpp" >&2
 fi
+FW_BUILD=$(grep -oP '#define FW_BUILD \K[0-9]+' src/main.cpp || true)
+if [ -n "$FW_BUILD" ]; then
+  echo -n "$FW_BUILD" > "$OUT_DIR/BUILD"
+  echo "firmware build: $FW_BUILD"
+else
+  echo "warning: could not extract FW_BUILD from src/main.cpp" >&2
+fi
 
 echo "packaged into $OUT_DIR/:"
 ls -la "$OUT_DIR"/*.bin

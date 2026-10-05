@@ -1,6 +1,7 @@
 #include "DeviceClient.h"
 
 #include <HTTPClient.h>
+#include <WiFi.h>
 #include <WiFiClientSecure.h>
 
 void DeviceClient::begin(const char* serverUrl, const char* fwVersion) {
@@ -110,5 +111,15 @@ ClaimResult DeviceClient::pollClaim(const char* claimCode) {
 bool DeviceClient::unpair(const char* token) {
   String body;
   int code = postJson("/v1/device/unpair", "{}", token, body);
+  return code == 200;
+}
+
+bool DeviceClient::sendStatus(const char* token, uint32_t fwBuild) {
+  String body;
+  String payload = "{\"fw\":\"" + fwVersion_ + "\",\"fw_build\":" +
+                   String(fwBuild) + ",\"battery_pct\":" +
+                   String(board_->batteryPercent()) + ",\"rssi\":" +
+                   String(WiFi.RSSI()) + "}";
+  int code = postJson("/v1/device/status", payload, token, body);
   return code == 200;
 }

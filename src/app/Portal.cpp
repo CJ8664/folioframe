@@ -151,7 +151,7 @@ void Portal::handleUnpair() {
 void Portal::handleDebug() {
   uint16_t mv = board_->batteryMilliVolts();
   String j = "{\"device\":\"" + board_->deviceId() +
-             "\",\"fw\":\"1.0.0\",\"battery_mv\":" + String(mv) +
+             "\",\"fw\":\"" + client_->fwVersion() + "\",\"battery_mv\":" + String(mv) +
              ",\"battery_pct\":" + String(board_->batteryPercent()) +
              ",\"rssi\":" + String(WiFi.RSSI()) +
              ",\"uptime_s\":" + String(millis() / 1000) +

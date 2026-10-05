@@ -101,10 +101,10 @@ DEFAULT_CONFIG = {
     # Firmware OTA: bump "build" (integer) whenever you publish a new
     # server/firmware/firmware.bin. Devices whose FW_BUILD is lower will
     # download and flash it (battery-gated, MD5-verified).
-    "build": "1",
+    "build": "5",
     # Shown on the public /flash page and in its esp-web-tools manifest.
     # Keep in sync with FW_VERSION in src/main.cpp.
-    "fw_version": "2.0.0",
+    "fw_version": "3.2.0",
     # The service's Google OAuth client (admin one-time setup): used for
     # "Sign in with Google" and for Google Photos. Users never see these
     # values. Get them from Google Cloud Console -> your project ->
@@ -192,7 +192,16 @@ class Server:
         self._shared_sources = {}  # name -> Source (stateless, shared)
         self._photos = {}          # google sub -> GPhotosController
         self._frames = {}          # device_id -> current frame slot
+        # OTA build number: BUILD file (written by package_firmware.sh from
+        # the firmware's FW_BUILD) wins; config/env is the fallback.
         self.build = str(self.cfg.get("build", "1"))
+        try:
+            with open(os.path.join(FW_DIR, "BUILD")) as f:
+                b = f.read().strip()
+                if b.isdigit():
+                    self.build = b
+        except OSError:
+            pass
 
     # ---- per-user state -------------------------------------------------
     def _get_user(self, sub):
@@ -808,13 +817,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 devs.append({
                     "device_id": d["device_id"], "name": d.get("name"),
                     "panel": d.get("panel"), "fw": d.get("fw"),
+                    "fw_build": d.get("fw_build"),
                     "last_seen": d.get("last_seen"),
                     "battery_mv": d.get("battery_mv"),
                     "battery_pct": d.get("battery_pct"),
                     "rssi": d.get("rssi"),
                     "override": bool(d.get("override_etag")),
                 })
-            self._json(200, {"ok": True, "devices": devs})
+            self._json(200, {"ok": True, "devices": devs,
+                             "latest_fw": APP.fw_version(),
+                             "latest_build": int(APP.build)})
             return
 
         dev_id, rest = self._device_id_from_path("/api/devices/")
@@ -1846,12 +1858,16 @@ async function renderDevices(){
     <div class='btnrow'><a class='btn' href='/claim'>Pair a frame</a></div>`;
     return;
   }
-  el.innerHTML=d.devices.map(dev=>`
+  const latestBuild=d.latest_build||0, latestFw=d.latest_fw||'';
+  el.innerHTML=d.devices.map(dev=>{
+    const behind=dev.fw_build!=null&&latestBuild&&dev.fw_build<latestBuild;
+    const fwBadge=behind?` <span class='pill'><span class='dot'></span>Update available: ${esc(latestFw)}</span>`:'';
+    return `
     <div class='dev'>
       <span class='nm'>${esc(dev.name||'Frame')}</span><br>
       <span class='meta'>${esc(dev.device_id)}</span><br>
       <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
-      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}</span>
+      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}${fwBadge}</span>
       ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
       <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
@@ -1863,7 +1879,8 @@ async function renderDevices(){
         <button class='btn ghost sm' onclick='renameDev("${dev.device_id}")'>Rename</button>
         <button class='btn ghost sm' onclick='unpair("${dev.device_id}")'>Unpair</button>
       </div>
-    </div>`).join('')+`<p class='msg' id='dev-msg'></p>
+    </div>`;
+  }).join('')+`<p class='msg' id='dev-msg'></p>
     <div class='btnrow'><a class='btn ghost sm' href='/claim'>Pair another frame</a></div>`;
 }
 function devMsg(msg,isErr){

@@ -45,8 +45,13 @@ class DeviceClient {
   RegisterResult registerDevice();
   ClaimResult pollClaim(const char* claimCode);
   bool unpair(const char* token);  // true on 200
+  // Report telemetry (firmware version, battery, signal). Best-effort:
+  // failures never block the wake cycle. Powers the console's firmware
+  // version display and update-available badge.
+  bool sendStatus(const char* token, uint32_t fwBuild);
 
   String lastError() const { return lastError_; }
+  String fwVersion() const { return fwVersion_; }
 
  private:
   Board* board_;
