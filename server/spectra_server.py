@@ -215,6 +215,19 @@ class Server:
         return all(os.path.isfile(os.path.join(FW_DIR, name))
                    for name, _ in FLASH_PARTS)
 
+    def fw_version(self):
+        """Version of the published firmware. Single source of truth is the
+        VERSION file written by tools/package_firmware.sh from the firmware's
+        FW_VERSION; the config value is only a fallback."""
+        try:
+            with open(os.path.join(FW_DIR, "VERSION")) as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except OSError:
+            pass
+        return self.cfg.get("fw_version", "2.0.0")
+
     def photos_for(self, sub):
         """Per-user Google Photos controller (shared service OAuth client).
 
@@ -605,7 +618,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/flash":
             self._send(200, "text/html", _flash_page(
                 APP.flash_available(),
-                APP.cfg.get("fw_version", "2.0.0")).encode())
+                APP.fw_version()).encode())
             return
 
         if p == "/flash/manifest.json":
@@ -615,7 +628,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self._json(200, {
                 "name": "SpectraFrame",
-                "version": APP.cfg.get("fw_version", "2.0.0"),
+                "version": APP.fw_version(),
                 "builds": [{
                     "chipFamily": "ESP32-S3",
                     "parts": [

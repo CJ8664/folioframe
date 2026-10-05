@@ -35,6 +35,16 @@ mkdir -p "$OUT_DIR"
 cp "$BUILD_DIR/bootloader.bin" "$BUILD_DIR/partitions.bin" "$BUILD_DIR/firmware.bin" "$OUT_DIR/"
 cp "$PIO_PKG/tools/partitions/boot_app0.bin" "$OUT_DIR/"
 
+# Single source of truth for the published firmware version: the server's
+# /flash page and manifest read this file (fallback: fw_version in config).
+FW_VERSION=$(grep -oP '#define FW_VERSION "\K[^"]+' src/main.cpp || true)
+if [ -n "$FW_VERSION" ]; then
+  echo -n "$FW_VERSION" > "$OUT_DIR/VERSION"
+  echo "firmware version: $FW_VERSION"
+else
+  echo "warning: could not extract FW_VERSION from src/main.cpp" >&2
+fi
+
 echo "packaged into $OUT_DIR/:"
 ls -la "$OUT_DIR"/*.bin
 md5sum "$OUT_DIR"/*.bin 2>/dev/null || md5 "$OUT_DIR"/*.bin

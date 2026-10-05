@@ -36,6 +36,10 @@ bool Gdeb0709e01Panel::begin() {
     Serial.printf("panel begin failed: %s\n", display.lastResult().message);
     return false;
   }
+  // BUSY (GPIO4) is the only signal back from the panel. Sample it here:
+  // a live panel idles HIGH and pulls LOW while refreshing. Stuck HIGH
+  // through a refresh means the panel never executed it (power/cable).
+  Serial.printf("panel begin ok, BUSY=%d\n", digitalRead(4));
   return true;
 }
 
@@ -77,7 +81,13 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
     display.drawString(lines[i], 60, y, 2);
     y += 48;
   }
+  Serial.printf("update start, BUSY=%d\n", digitalRead(4));
+  uint32_t t0 = millis();
   display.update();
+  // A real Spectra 6 full refresh holds BUSY low ~27 s. If this returns in
+  // ~1 s with BUSY stuck HIGH, the panel never executed the refresh.
+  Serial.printf("update done in %lums, BUSY=%d\n", millis() - t0,
+                digitalRead(4));
   return true;
 }
 
