@@ -470,6 +470,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _json(self, code, obj, extra=None):
         self._send(code, "application/json", json.dumps(obj).encode(), extra)
 
+    def _static(self, name, ctype, extra=None):
+        # Serves a file from server/static/. Path traversal is blocked by
+        # the caller (no slashes allowed in `name`).
+        path = os.path.join(STATIC_DIR, name)
+        if not os.path.isfile(path):
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        with open(path, "rb") as f:
+            self._send(200, ctype, f.read(), extra)
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b""
@@ -541,6 +551,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # ---- GET ----------------------------------------------------------
     def do_GET(self):
         p = urllib.parse.urlparse(self.path).path
+
+        if p == "/manifest.webmanifest":
+            self._static("manifest.webmanifest",
+                         "application/manifest+json")
+            return
+
+        if p == "/sw.js":
+            # Service workers must not be cached aggressively.
+            self._static("sw.js", "application/javascript",
+                         {"Cache-Control": "no-cache"})
+            return
+
+        if p.startswith("/static/"):
+            name = p[len("/static/"):]
+            if not name or "/" in name or name.startswith("."):
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            ctype = {".png": "image/png", ".jpg": "image/jpeg",
+                     ".svg": "image/svg+xml", ".ico": "image/x-icon",
+                     ".webmanifest": "application/manifest+json",
+                     ".js": "application/javascript"}.get(
+                os.path.splitext(name)[1].lower(),
+                "application/octet-stream")
+            self._static(name, ctype,
+                         {"Cache-Control": "public, max-age=86400"})
+            return
 
         if p == "/api/config":
             # Public client config. The Google OAuth client ID is designed
@@ -1001,59 +1037,240 @@ class Handler(http.server.BaseHTTPRequestHandler):
 # Console HTML
 # --------------------------------------------------------------------------
 
-def WELCOME_HTML():
-    """Public welcome page: the only unauthenticated page.
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
-    Friendly sign-in only -- no setup steps, no jargon. The server's
-    Google OAuth client ID comes from /api/config; GIS renders the
-    official button.
-    """
+# ---------------------------------------------------------------------------
+# Frosted-glass design system (iOS HIG + Umbrel 2.0 inspired).
+# Dark-first; light mode via prefers-color-scheme. Mobile-first layout.
+# ---------------------------------------------------------------------------
+GLASS_CSS = """
+:root{
+  --bg:#070a13;
+  --glass:rgba(255,255,255,.09);
+  --glass2:rgba(255,255,255,.15);
+  --edge:rgba(255,255,255,.17);
+  --txt:#f4f6ff; --dim:rgba(240,244,255,.68); --faint:rgba(240,244,255,.45);
+  --blue:#0a84ff; --blue2:#5e5ce6; --green:#30d158; --red:#ff453a; --amber:#ff9f0a;
+  --r:22px; --rs:14px;
+  --shadow:0 18px 50px rgba(0,0,0,.45);
+  --font:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',Roboto,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font-family:var(--font);color:var(--txt);background:var(--bg);
+  min-height:100dvh;line-height:1.55;font-size:16px;
+  padding-bottom:env(safe-area-inset-bottom)}
+.bg{position:fixed;inset:0;z-index:-1;overflow:hidden;background:
+  radial-gradient(1200px 800px at 85% -10%,#1b2358 0%,transparent 60%),
+  radial-gradient(1000px 700px at -10% 30%,#0e4a6e 0%,transparent 55%),
+  radial-gradient(900px 900px at 50% 110%,#3b1d6e 0%,transparent 60%),#070a13}
+.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5;
+  animation:drift 26s ease-in-out infinite alternate}
+.b1{width:52vmax;height:52vmax;left:-14vmax;top:-12vmax;background:#2b3a9e}
+.b2{width:44vmax;height:44vmax;right:-12vmax;top:22%;background:#0e7d8c;animation-delay:-9s}
+.b3{width:40vmax;height:40vmax;left:20%;bottom:-16vmax;background:#6e2bb8;animation-delay:-17s}
+@keyframes drift{to{transform:translate(6vmax,4vmax) scale(1.12)}}
+@media (prefers-reduced-motion:reduce){.blob{animation:none}}
+.sheet{max-width:600px;margin:0 auto;padding:20px 16px 40px}
+.topbar{position:sticky;top:0;z-index:10;margin:0 -16px;padding:10px 16px;
+  padding-top:calc(10px + env(safe-area-inset-top));
+  background:rgba(7,10,19,.55);backdrop-filter:blur(24px) saturate(170%);
+  -webkit-backdrop-filter:blur(24px) saturate(170%);
+  border-bottom:1px solid rgba(255,255,255,.1)}
+.topbar-in{max-width:600px;margin:0 auto;display:flex;align-items:center;gap:10px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;
+  letter-spacing:-.01em}
+.brand img{width:32px;height:32px;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+.topbar .sp{flex:1}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--glass2);
+  border:1px solid var(--edge);display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:15px;color:var(--txt)}
+.iconbtn{width:40px;height:40px;border-radius:50%;border:1px solid var(--edge);
+  background:var(--glass);color:var(--txt);font-size:17px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  transition:transform .15s ease,opacity .15s ease}
+.iconbtn:active{transform:scale(.92);opacity:.8}
+.card{background:var(--glass);border:1px solid var(--edge);border-radius:var(--r);
+  box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.22);
+  backdrop-filter:blur(24px) saturate(170%);
+  -webkit-backdrop-filter:blur(24px) saturate(170%);
+  padding:22px;margin:16px 0}
+.card h2{margin:0 0 4px;font-size:20px;font-weight:700;letter-spacing:-.02em}
+.card .sub{margin:0 0 14px;color:var(--dim);font-size:14.5px}
+.hero{text-align:center;padding:40px 24px 32px}
+.hero img{width:92px;height:92px;border-radius:26px;
+  box-shadow:0 16px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.3)}
+.hero h1{font-size:34px;margin:18px 0 8px;font-weight:700;letter-spacing:-.03em}
+.hero .tag{color:var(--dim);font-size:17px;margin:0 0 24px}
+.feat{display:flex;gap:14px;align-items:flex-start;padding:13px 2px;
+  border-top:1px solid rgba(255,255,255,.09)}
+.feat:first-of-type{border-top:none}
+.feat .ic{flex:0 0 38px;width:38px;height:38px;border-radius:12px;
+  background:linear-gradient(135deg,rgba(10,132,255,.35),rgba(94,92,230,.35));
+  border:1px solid rgba(255,255,255,.2);display:flex;align-items:center;
+  justify-content:center;font-size:19px}
+.feat b{display:block;font-size:15.5px}
+.feat span{color:var(--dim);font-size:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  min-height:48px;padding:0 22px;border:none;border-radius:var(--rs);
+  background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;
+  font-family:var(--font);font-size:16.5px;font-weight:600;cursor:pointer;
+  text-decoration:none;box-shadow:0 8px 24px rgba(10,132,255,.35),
+  inset 0 1px 0 rgba(255,255,255,.25);
+  transition:transform .15s cubic-bezier(.2,.8,.2,1),opacity .15s ease}
+.btn:active{transform:scale(.96);opacity:.85}
+.btn.ghost{background:var(--glass2);border:1px solid var(--edge);color:var(--txt);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.btn.sm{min-height:40px;padding:0 16px;font-size:14.5px;border-radius:12px}
+.btn:disabled{opacity:.45}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+#gbtn{display:flex;justify-content:center;margin:6px 0;min-height:48px}
+.err{color:#ffb4ab;min-height:1.5em;font-size:14px;text-align:center;margin:8px 0}
+.msg{font-size:14px;margin:10px 0 0;color:var(--dim)}
+.msg.err{color:#ffb4ab}.msg.ok{color:#7dffa8}
+.muted{color:var(--dim);font-size:14px}
+.fine{font-size:13px;color:var(--faint);text-align:center;margin:12px 0 0}
+.pill{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;
+  padding:6px 13px;border-radius:999px;border:1px solid var(--edge);
+  background:var(--glass2);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:var(--amber)}
+.pill.on .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+.seg{display:flex;background:rgba(0,0,0,.28);border:1px solid var(--edge);
+  border-radius:16px;padding:4px;gap:2px;overflow-x:auto;
+  -webkit-overflow-scrolling:touch;margin:4px 0 6px}
+.seg button{flex:1 0 auto;border:none;background:transparent;color:var(--dim);
+  font-family:var(--font);font-size:14.5px;font-weight:600;min-height:44px;
+  padding:0 16px;border-radius:12px;cursor:pointer;white-space:nowrap;
+  transition:transform .15s ease,background .2s ease}
+.seg button:active{transform:scale(.96)}
+.seg button.sel{background:rgba(255,255,255,.92);color:#0a0f1e;
+  box-shadow:0 4px 14px rgba(0,0,0,.3)}
+.dev{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.1);
+  border-radius:18px;padding:16px;margin:12px 0}
+.dev .nm{font-weight:700;font-size:16px}
+.dev .meta{color:var(--faint);font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+.dev img{width:100%;border-radius:12px;margin:10px 0;border:1px solid rgba(255,255,255,.12)}
+.dev form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}
+input[type=file]{color:var(--dim);font-size:13.5px;max-width:100%}
+input[type=text],input:not([type]){background:rgba(0,0,0,.3);
+  border:1px solid var(--edge);border-radius:var(--rs);color:var(--txt);
+  font-family:var(--font);font-size:17px;padding:0 16px;min-height:50px;width:100%}
+input::placeholder{color:var(--faint)}
+.code{font-family:ui-monospace,SF Mono,Menlo,monospace;font-size:30px !important;
+  letter-spacing:6px;text-align:center;text-transform:uppercase}
+:focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:8px}
+.installbar{display:none;align-items:center;gap:12px}
+.installbar.show{display:flex}
+.kv{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:12px 2px;border-top:1px solid rgba(255,255,255,.09);font-size:15px}
+.kv:first-of-type{border-top:none}
+.kv .k{color:var(--dim)}
+@media (min-width:640px){.hero h1{font-size:40px}.sheet{padding-top:28px}}
+@media (prefers-color-scheme:light){
+  :root{--bg:#eef1f8;--glass:rgba(255,255,255,.62);--glass2:rgba(255,255,255,.75);
+    --edge:rgba(15,25,60,.14);--txt:#0b1020;--dim:rgba(20,30,60,.66);
+    --faint:rgba(20,30,60,.42);--shadow:0 18px 44px rgba(30,50,120,.16)}
+  .bg{background:
+    radial-gradient(1200px 800px at 85% -10%,#c9d4ff 0%,transparent 60%),
+    radial-gradient(1000px 700px at -10% 30%,#bfe9f5 0%,transparent 55%),
+    radial-gradient(900px 900px at 50% 110%,#e3c9ff 0%,transparent 60%),#eef1f8}
+  .blob{opacity:.55}
+  .topbar{background:rgba(238,241,248,.6)}
+  .seg{background:rgba(20,30,60,.08)}
+  .seg button.sel{background:#fff;color:#0b1020}
+  .dev{background:rgba(255,255,255,.5)}
+  input[type=text],input:not([type]){background:rgba(255,255,255,.7);color:#0b1020}
+  .feat .ic{background:linear-gradient(135deg,rgba(10,132,255,.18),rgba(94,92,230,.18))}
+  .msg.err{color:#b3261e}.msg.ok{color:#146c2e}.err{color:#b3261e}
+}
+"""
+
+PWA_HEAD = """
+<link rel='manifest' href='/manifest.webmanifest'>
+<meta name='theme-color' content='#070a13'>
+<meta name='mobile-web-app-capable' content='yes'>
+<meta name='apple-mobile-web-app-capable' content='yes'>
+<meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>
+<meta name='apple-mobile-web-app-title' content='SpectraFrame'>
+<link rel='apple-touch-icon' href='/static/icon-180.png'>
+<link rel='icon' type='image/png' sizes='192x192' href='/static/icon-192.png'>
+"""
+
+SW_REGISTER = """
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('/sw.js').catch(function(){});
+  });
+}
+(function(){
+  var btn=document.getElementById('installbtn');
+  if(!btn) return;
+  function show(label,fn){
+    btn.style.display='inline-flex';btn.textContent=label;
+    btn.onclick=fn;
+  }
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault();show('Install app',function(){e.prompt();});
+  });
+  var ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  var standalone=window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone;
+  if(ios && !standalone){
+    show('Add to Home Screen',function(){
+      alert('Tap Share, then "Add to Home Screen" to install SpectraFrame.');
+    });
+  }
+})();
+</script>
+"""
+
+
+def WELCOME_HTML():
+    """Public welcome page: frosted-glass hero, GIS sign-in only."""
     return """<html><head><meta name='viewport'
-content='width=device-width,initial-scale=1'><title>SpectraFrame</title>
-<link rel='preconnect' href='https://fonts.googleapis.com'>
-<link href='https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap' rel='stylesheet'>
-<style>
-:root{--paper:#F7F5F0;--card:#FDFCF9;--hairline:#E4E1D8;--ink:#1F1B16;
---muted:#6E665C;--accent:#B3541E;--accent-dark:#8F3F14;--err:#A33327;}
-*{box-sizing:border-box}
-body{background:var(--paper);color:var(--ink);
-font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
-margin:0;padding:56px 20px;line-height:1.6;}
-.wrap{max-width:620px;margin:0 auto}
-.kicker{font-size:12px;letter-spacing:3px;font-weight:600;color:var(--accent);
-text-transform:uppercase;margin:0 0 14px}
-h1{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:42px;
-line-height:1.12;margin:0 0 16px}
-.sub{font-size:18px;color:var(--muted);margin:0 0 30px}
-.card{background:var(--card);border:1px solid var(--hairline);
-border-radius:18px;padding:30px;margin:0}
-.benefits{list-style:none;padding:0;margin:0 0 10px}
-.benefits li{padding:10px 0 10px 36px;position:relative;font-size:16px}
-.benefits li::before{content:'\\2713';position:absolute;left:6px;
-color:var(--accent);font-weight:700}
-#gbtn{display:flex;justify-content:center;margin:10px 0;min-height:48px}
-#err{color:var(--err);min-height:1.5em;font-size:14px;text-align:center;margin:8px 0}
-.fine{font-size:13px;color:var(--muted);text-align:center;margin:10px 0 0}
+content='width=device-width,initial-scale=1,viewport-fit=cover'>
+<title>SpectraFrame</title>
+""" + PWA_HEAD + """<style>""" + GLASS_CSS + """
+#err{margin-top:10px}
 </style>
 <script src='https://accounts.google.com/gsi/client' async defer></script>
-</head><body><div class='wrap'>
-<p class='kicker'>SpectraFrame</p>
-<h1>Your memories,<br>on paper-like e-ink.</h1>
-<p class='sub'>SpectraFrame turns the photos you love into a calm,
-always-on gallery for your home.</p>
-<div class='card'>
-<ul class='benefits'>
-<li><b>You choose the photos</b> — pick from Google Photos whenever you like.</li>
-<li><b>Your frame does the rest</b> — it shows them on its own, no phone needed.</li>
-<li><b>Private by design</b> — read-only access; disconnect anytime.</li>
-</ul>
-<div id='gbtn'></div>
-<p id='err'></p>
-<p class='fine'>Takes about 30 seconds. We never see your Google password.<br>
-<span id='https-note' style='display:none'>Heads up: Google sign-in needs this
-page over HTTPS (or <code>localhost</code>).</span></p>
-</div>
-</div>
+</head><body>
+<div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
+<div class='blob b3'></div></div>
+<main class='sheet'>
+  <div class='card hero'>
+    <img src='/static/icon-192.png' alt='SpectraFrame'>
+    <h1>SpectraFrame</h1>
+    <p class='tag'>Your memories, floating on glass.</p>
+    <div id='gbtn'></div>
+    <p id='err' class='err'></p>
+    <p class='fine'>Takes about 30 seconds. We never see your Google password.<br>
+    <span id='https-note' style='display:none'>Heads up: Google sign-in needs
+    this page over HTTPS (or localhost).</span></p>
+  </div>
+  <div class='card'>
+    <div class='feat'><div class='ic'>&#x1F5BC;</div><div>
+      <b>You choose the photos</b>
+      <span>Pick from Google Photos whenever you like — the frame shows them on its own.</span>
+    </div></div>
+    <div class='feat'><div class='ic'>&#x1F512;</div><div>
+      <b>Private by design</b>
+      <span>Read-only access. We never change, move, or delete your photos.</span>
+    </div></div>
+    <div class='feat'><div class='ic'>&#x1F4F1;</div><div>
+      <b>Made for your home</b>
+      <span>Installs like an app. Pair a frame with the code on its screen.</span>
+    </div></div>
+  </div>
+  <div class='card installbar' id='installcard'>
+    <div style='flex:1'><b>Install SpectraFrame</b><br>
+    <span class='muted'>Add it to your home screen for the full app feel.</span></div>
+    <button class='btn sm' id='installbtn' style='display:none'>Install app</button>
+  </div>
+</main>
 <script>
 function showError(m){document.getElementById('err').textContent=m;}
 function onGoogle(r){
@@ -1067,87 +1284,78 @@ function onGoogle(r){
 }
 function initGis(cid){
   if(!(window.google&&google.accounts&&google.accounts.id)){
-    setTimeout(()=>initGis(cid),200);return;
+    setTimeout(function(){initGis(cid);},200);return;
   }
   if(location.protocol!=='https:'&&location.hostname!=='localhost'
      &&location.hostname!=='127.0.0.1')
     document.getElementById('https-note').style.display='inline';
   google.accounts.id.initialize({client_id:cid,callback:onGoogle});
   google.accounts.id.renderButton(document.getElementById('gbtn'),
-    {type:'standard',theme:'outline',size:'large',width:280});
+    {type:'standard',theme:'filled_black',size:'large',width:280});
 }
-window.addEventListener('load',()=>{
+(function(){
+  var card=document.getElementById('installcard');
+  function showInstall(){card.classList.add('show');}
+  window.addEventListener('beforeinstallprompt',function(){showInstall();});
+  var ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  var standalone=window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone;
+  if(ios && !standalone) showInstall();
+})();
+window.addEventListener('load',function(){
   fetch('/api/config').then(r=>r.json()).then(c=>{
-    const cid=c.google_client_id||'';
+    var cid=c.google_client_id||'';
     if(!cid){showError('This server is not set up yet.');return;}
     initGis(cid);
   }).catch(()=>showError('Could not reach the server. Please try again.'));
 });
-</script></body></html>"""
+</script>
+""" + SW_REGISTER + """</body></html>"""
 
 
 CONSOLE_HTML = """<html><head><meta name='viewport'
-content='width=device-width,initial-scale=1'><title>SpectraFrame</title>
-<link rel='preconnect' href='https://fonts.googleapis.com'>
-<link href='https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap' rel='stylesheet'>
-<style>
-:root{--paper:#F7F5F0;--card:#FDFCF9;--hairline:#E4E1D8;--ink:#1F1B16;
---muted:#6E665C;--accent:#B3541E;--accent-dark:#8F3F14;--ok:#2E7D4F;--err:#A33327;}
-*{box-sizing:border-box}
-body{background:var(--paper);color:var(--ink);
-font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
-margin:0;padding:32px 20px 72px;line-height:1.6;}
-.wrap{max-width:680px;margin:0 auto}
-.top{display:flex;align-items:center;justify-content:space-between;
-margin-bottom:26px;flex-wrap:wrap;gap:8px}
-.brand{font-family:'Fraunces',Georgia,serif;font-size:26px;font-weight:600}
-.top .who{font-size:14px;color:var(--muted)}
-.top a,.top button.link{font-size:14px;color:var(--accent);text-decoration:none;
-background:none;border:0;cursor:pointer;font-family:inherit;padding:0}
-.top a:hover,.top button.link:hover{text-decoration:underline}
-.card{background:var(--card);border:1px solid var(--hairline);
-border-radius:18px;padding:26px;margin:0 0 20px}
-.card h3{font-family:'Fraunces',Georgia,serif;font-size:22px;margin:0 0 6px;font-weight:600}
-.card p{margin:8px 0}
-.muted{color:var(--muted);font-size:14px}
-.btn{display:inline-block;background:var(--accent);color:#fff;border:0;
-border-radius:999px;padding:12px 26px;font-size:15px;font-weight:600;
-cursor:pointer;font-family:inherit;text-decoration:none}
-.btn:hover{background:var(--accent-dark)}
-.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--hairline)}
-.btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
-.btn:disabled{opacity:.45;cursor:default}
-.btn.sm{padding:8px 18px;font-size:14px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
-.msg{font-size:14px;min-height:1.4em;margin:10px 0 0}
-.msg.err{color:var(--err)}.msg.ok{color:var(--ok)}
-.reassure{list-style:none;padding:0;margin:14px 0}
-.reassure li{padding:6px 0 6px 32px;position:relative;font-size:15px}
-.reassure li::before{content:'\\2713';position:absolute;left:8px;
-color:var(--ok);font-weight:700}
-.dev{border:1px solid var(--hairline);border-radius:14px;padding:18px;margin:14px 0}
-.dev img{border-radius:10px;border:1px solid var(--hairline);margin:10px 0;
-max-width:100%;display:block}
-.dev .meta{font-size:13px;color:var(--muted)}
-.srcbtn{margin:0 8px 8px 0}
-input[type=text],input[type=file]{font:inherit}
-input[type=text]{padding:10px 14px;border:1px solid var(--hairline);
-border-radius:12px;background:#fff;width:100%;max-width:320px}
-</style></head><body><div class='wrap'>
-<div class='top'>
-<div><span class='brand'>SpectraFrame</span></div>
-<div><span class='who' id='who'></span> &nbsp;·&nbsp;
-<a href='/claim'>Pair a frame</a> &nbsp;·&nbsp;
-<button class='link' onclick='logout()'>Sign out</button></div>
-</div>
-<div class='card'><h3 id='hello'>Welcome</h3>
-<p class='muted'>This is your space — only you can see what's here.</p></div>
-<div class='card'><h3>Google Photos</h3><div id='photos'>
-<p class='muted'>Loading…</p></div></div>
-<div class='card'><h3>What to show</h3><div id='src'></div>
-<p class='muted'>Your frames follow this choice.</p></div>
-<div class='card'><h3>Frames</h3><div id='devices'>
-<p class='muted'>Loading…</p></div></div>
+content='width=device-width,initial-scale=1,viewport-fit=cover'>
+<title>SpectraFrame</title>
+""" + PWA_HEAD + """<style>""" + GLASS_CSS + """</style>
+</head><body>
+<div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
+<div class='blob b3'></div></div>
+<header class='topbar'><div class='topbar-in'>
+  <span class='brand'><img src='/static/icon-192.png' alt=''>SpectraFrame</span>
+  <span class='sp'></span>
+  <button class='btn ghost sm' id='installbtn' style='display:none'>Install</button>
+  <span class='avatar' id='avatar' title=''>?</span>
+  <button class='iconbtn' onclick='logout()' title='Sign out'
+    aria-label='Sign out'>&#x23FB;</button>
+</div></header>
+<main class='sheet'>
+  <div class='card' id='photos-card'>
+    <h2>Google Photos</h2>
+    <p class='sub' id='photos-sub'>Your frame's photo library.</p>
+    <div id='photos'><p class='muted'>Loading&hellip;</p></div>
+  </div>
+  <div class='card'>
+    <h2>Photo source</h2>
+    <p class='sub'>What your frames show right now.</p>
+    <div class='seg' id='src' role='tablist' aria-label='Photo source'></div>
+    <div class='btnrow'>
+      <button class='btn ghost sm' onclick='nextFrame()'>Show next photo now</button>
+    </div>
+    <p class='msg' id='src-msg'></p>
+  </div>
+  <div class='card'>
+    <h2>Frames</h2>
+    <p class='sub'>Devices paired to your account.</p>
+    <div id='devices'><p class='muted'>Loading&hellip;</p></div>
+  </div>
+  <div class='card'>
+    <h2>Account</h2>
+    <div class='kv'><span class='k'>Signed in as</span><b id='who'></b></div>
+    <div class='btnrow'>
+      <button class='btn ghost sm' onclick='logout()'>Sign out</button>
+    </div>
+  </div>
+</main>
 <script>
 let CSRF='';
 const SRC_NAMES={dashboard:'Daily dashboard',folder:'Photo folder',
@@ -1167,37 +1375,43 @@ async function init(){
   CSRF=s.csrf;
   const a=await (await fetch('/api/account')).json();
   document.getElementById('who').textContent=a.email||'';
-  document.getElementById('hello').textContent=
-    'Welcome'+(a.name?', '+a.name:'');
+  const av=document.getElementById('avatar');
+  av.textContent=(a.email||'?').trim().charAt(0).toUpperCase()||'?';
+  av.title=a.email||'';
   renderDevices();renderSources(a);renderPhotos();
 }
 /* ---------- Google Photos ---------- */
 async function renderPhotos(){
   const g=await (await fetch('/api/gphotos/status')).json();
   const el=document.getElementById('photos');
+  const sub=document.getElementById('photos-sub');
   if(!g.connected){
+    sub.textContent='Connect once, then pick the photos you love.';
     el.innerHTML=`
-      <p>Show the photos you love, straight from your library.</p>
-      <ul class='reassure'>
-        <li><b>Read-only</b> — we never change, move, or delete your photos.</li>
-        <li><b>You choose</b> — you pick exactly which photos we can see.</li>
-        <li><b>Undo anytime</b> — disconnect in one tap.</li>
-      </ul>
-      <div class='row'>
+      <p><span class='pill'><span class='dot'></span>Not connected</span></p>
+      <div class='feat'><div class='ic'>&#x1F512;</div><div>
+        <b>Read-only</b><span>We never change, move, or delete your photos.</span>
+      </div></div>
+      <div class='feat'><div class='ic'>&#x1F5BC;</div><div>
+        <b>You choose</b><span>You pick exactly which photos we can see.</span>
+      </div></div>
+      <div class='btnrow'>
         <a class='btn' href='/api/gphotos/connect?origin=${encodeURIComponent(location.origin)}'>Connect Google Photos</a>
       </div>
-      <p class='muted'>You will approve access on Google's own screen — nothing to copy or paste.</p>
+      <p class='muted'>You approve access on Google's own screen — nothing to copy or paste.</p>
       <p class='msg' id='photos-msg'></p>`;
   }else{
     let st='';
     if(g.picking)
-      st=`<p>Picker open — <a href='${g.picker_uri}' target='_blank'>continue choosing photos</a>, then come back here.</p>`;
+      st=`<p class='msg'>Picker open — <a style='color:#fff' href='${g.picker_uri}' target='_blank' rel='noopener'>continue choosing photos</a>, then come back here.</p>`;
     else if(g.pick_status==='error')
       st=`<p class='msg err'>Couldn't finish picking: ${esc(g.pick_error)} Please try again.</p>`;
+    sub.textContent='Connected — your picks live on this server.';
     el.innerHTML=`
-      <p><b>Connected \\u2713</b> · ${g.cached} photo${g.cached==1?'':'s'} ready for your frame</p>
+      <p><span class='pill on'><span class='dot'></span>Connected</span>
+      <span class='muted'> &middot; ${g.cached} photo${g.cached==1?'':'s'} ready for your frame</span></p>
       ${st}
-      <div class='row'>
+      <div class='btnrow'>
         <button class='btn' onclick='gpick()'>Pick more photos</button>
         <button class='btn ghost' onclick='gdisc()'>Disconnect</button>
       </div>
@@ -1228,11 +1442,10 @@ async function gdisc(){
 /* ---------- sources ---------- */
 async function renderSources(a){
   document.getElementById('src').innerHTML=
-    a.sources.map(n=>`<button class='btn ${n===a.source?'':'ghost'} sm srcbtn'
+    a.sources.map(n=>`<button role='tab' aria-selected='${n===a.source}'
+      class='${n===a.source?'sel':''}'
       ${n===a.source?'disabled':''}
-      onclick="setSrc('${n}')">${srcName(n)}</button>`).join('')+
-    ` <button class='btn ghost sm' onclick='nextFrame()'>Show next photo now</button>
-       <p class='msg' id='src-msg'></p>`;
+      onclick="setSrc('${n}')">${srcName(n)}</button>`).join('');
 }
 async function setSrc(n){
   const r=await api('POST','/api/source',{name:n});
@@ -1252,29 +1465,29 @@ async function renderDevices(){
   const el=document.getElementById('devices');
   if(!d.devices.length){
     el.innerHTML=`<p><b>No frames paired yet.</b></p>
-    <p class='muted'>When your frame arrives, choose <b>Pair a frame</b> above and
-    enter the code shown on its screen.</p>
-    <div class='row'><a class='btn' href='/claim'>Pair a frame</a></div>`;
+    <p class='muted'>When your frame arrives, pair it with the code shown on its screen.</p>
+    <div class='btnrow'><a class='btn' href='/claim'>Pair a frame</a></div>`;
     return;
   }
   el.innerHTML=d.devices.map(dev=>`
     <div class='dev'>
-      <b>${esc(dev.name||'Frame')}</b>
+      <span class='nm'>${esc(dev.name||'Frame')}</span><br>
       <span class='meta'>${esc(dev.device_id)}</span><br>
       <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
-      · Battery: ${dev.battery_pct??'—'}% · Firmware: ${esc(dev.fw??'—')}</span><br>
-      ${dev.override?'<p><b>📌 Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
-      <img src='/api/devices/${dev.device_id}/preview' width='320' alt='Current frame photo'><br>
+      &middot; Battery: ${dev.battery_pct??'&mdash;'}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}</span>
+      ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
+      <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
-        <input type='file' name='photo' accept='image/*' required>
+        <input type='file' name='photo' accept='image/*' required aria-label='Photo to push'>
         <button class='btn sm'>Push photo to frame</button>
       </form>
       <p class='muted'>Pushing pins the photo immediately; the frame shows it at its next wake.</p>
-      <div class='row'>
+      <div class='btnrow'>
         <button class='btn ghost sm' onclick='renameDev("${dev.device_id}")'>Rename</button>
         <button class='btn ghost sm' onclick='unpair("${dev.device_id}")'>Unpair</button>
       </div>
-    </div>`).join('')+`<p class='msg' id='dev-msg'></p>`;
+    </div>`).join('')+`<p class='msg' id='dev-msg'></p>
+    <div class='btnrow'><a class='btn ghost sm' href='/claim'>Pair another frame</a></div>`;
 }
 function devMsg(msg,isErr){
   const m=document.getElementById('dev-msg');if(!m)return;
@@ -1307,31 +1520,48 @@ async function renameDev(id){
 }
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
 init();
-</script></body></html>"""
+</script>
+""" + SW_REGISTER + """</body></html>"""
 
 
 CLAIM_HTML = """<html><head><meta name='viewport'
-content='width=device-width,initial-scale=1'><title>Pair device</title>
-</head><body style='font-family:sans-serif;max-width:480px;margin:40px auto'>
-<h2>Pair a device</h2>
-<p>Enter the 8-character code shown on the device's screen
-(<code>XXXX-XXXX</code>).</p>
-<input id='code' placeholder='XXXX-XXXX'
- style='font-size:1.4em;letter-spacing:2px;text-transform:uppercase'>
-<button onclick='claim()' style='font-size:1.2em'>Pair</button>
-<p id='msg'></p><p><a href='/'>back</a></p>
+content='width=device-width,initial-scale=1,viewport-fit=cover'>
+<title>Pair a frame &middot; SpectraFrame</title>
+""" + PWA_HEAD + """<style>""" + GLASS_CSS + """
+form .btn{width:100%;margin-top:14px}
+</style>
+</head><body>
+<div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
+<div class='blob b3'></div></div>
+<main class='sheet' style='max-width:480px'>
+  <div class='card' style='text-align:center;margin-top:8vh'>
+    <img src='/static/icon-192.png' alt='' style='width:64px;height:64px;border-radius:18px'>
+    <h2 style='margin-top:12px'>Pair a frame</h2>
+    <p class='sub'>Enter the 8-character code shown on the frame's screen.</p>
+    <form onsubmit='return pair(event)'>
+      <input id='code' class='code' placeholder='XXXX-XXXX' autocomplete='off'
+        autocapitalize='characters' maxlength='9' aria-label='Pairing code'>
+      <button class='btn'>Pair frame</button>
+    </form>
+    <p class='msg' id='msg'></p>
+  </div>
+</main>
 <script>
 let CSRF='';
 fetch('/api/session').then(r=>r.json()).then(s=>{CSRF=s.csrf||'';});
-async function claim(){
-  const code=document.getElementById('code').value;
+async function pair(e){
+  e.preventDefault();
+  const code=document.getElementById('code').value.trim();
   const r=await (await fetch('/api/devices/claim',{method:'POST',
     headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF},
     body:JSON.stringify({code})})).json();
-  document.getElementById('msg').textContent =
-    r.ok?('Paired: '+(r.name||r.device_id)):('Error: '+r.error);
+  document.getElementById('msg').textContent=
+    r.ok?('Paired: '+(r.name||r.device_id)):('Error: '+(r.error||'unknown error'));
+  document.getElementById('msg').className='msg '+(r.ok?'ok':'err');
+  return false;
 }
-</script></body></html>"""
+</script>
+""" + SW_REGISTER + """</body></html>"""
 
 
 def main():

@@ -329,6 +329,55 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b"Google Photos", data)
 
+    def test_pwa_assets(self):
+        # Web app manifest: valid, installable, references real icons.
+        status, hdrs, data = self.req("GET", "/manifest.webmanifest")
+        self.assertEqual(status, 200)
+        self.assertIn("application/manifest+json",
+                      hdrs.get("Content-Type", ""))
+        m = json.loads(data)
+        self.assertEqual(m["name"], "SpectraFrame")
+        self.assertEqual(m["display"], "standalone")
+        self.assertEqual(m["start_url"], "/")
+        sizes = {i["sizes"] for i in m["icons"]}
+        self.assertIn("192x192", sizes)
+        self.assertIn("512x512", sizes)
+        # Service worker: served, not cached aggressively.
+        status, hdrs, data = self.req("GET", "/sw.js")
+        self.assertEqual(status, 200)
+        self.assertIn("application/javascript",
+                      hdrs.get("Content-Type", ""))
+        self.assertIn(b"no-cache", hdrs.get("Cache-Control", "").encode())
+        self.assertIn(b"fetch", data)
+        # Icons: real PNG bytes.
+        for icon in ("icon-192.png", "icon-512.png", "icon-180.png",
+                     "icon-maskable-512.png"):
+            status, hdrs, data = self.req("GET", "/static/" + icon)
+            self.assertEqual(status, 200, icon)
+            self.assertIn("image/png", hdrs.get("Content-Type", ""))
+            self.assertTrue(data.startswith(b"\x89PNG"), icon)
+        # Path traversal is blocked.
+        status, _, _ = self.req("GET", "/static/../spectra_server.py")
+        self.assertEqual(status, 404)
+
+    def test_pages_declare_pwa(self):
+        status, _, data = self.req("GET", "/")
+        self.assertEqual(status, 200, "/")
+        body = data.decode()
+        self.assertIn("rel='manifest'", body, "/")
+        self.assertIn("theme-color", body, "/")
+        self.assertIn("apple-touch-icon", body, "/")
+        self.assertIn("serviceWorker", body, "/")
+        # Signed-in pages: console and claim.
+        cookie, _ = self.login()
+        for path in ("/", "/claim"):
+            status, _, data = self.req("GET", path,
+                                       headers={"Cookie": cookie})
+            self.assertEqual(status, 200, path)
+            body = data.decode()
+            self.assertIn("rel='manifest'", body, path)
+            self.assertIn("serviceWorker", body, path)
+
     def test_login_validates_token(self):
         for body in ({}, {"id_token": "forged"}):
             status, _, _ = self.req(
