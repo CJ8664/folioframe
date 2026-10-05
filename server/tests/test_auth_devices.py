@@ -596,12 +596,23 @@ class TestHTTP(unittest.TestCase):
         for name, _ in spectra_server.FLASH_PARTS:
             with open(os.path.join(tmp, name), "wb") as f:
                 f.write(b"fake-" + name.encode())
+        # Versioned binaries for the /flash version picker.
+        for v in ("2.0.0", "3.0.0"):
+            with open(os.path.join(tmp, f"firmware-{v}.bin"), "wb") as f:
+                f.write(b"fake-firmware-" + v.encode())
         old = spectra_server.FW_DIR
         spectra_server.FW_DIR = tmp
         try:
             status, _, data = self.req("GET", "/flash")
             self.assertEqual(status, 200)
-            self.assertIn(b"<esp-web-install-button", data)
+            # Inline flash console (no popup): 30/70 split, version picker,
+            # connect button, and the embedded ewt-install-dialog.
+            self.assertIn(b"flash-split", data)
+            self.assertIn(b"id='fwver'", data)
+            self.assertIn(b"id='flash-go'", data)
+            self.assertIn(b"id='console-wrap'", data)
+            self.assertIn(b"ewt-install-dialog", data)
+            self.assertNotIn(b"<esp-web-install-button", data)
             status, hdrs, data = self.req("GET", "/flash/manifest.json")
             self.assertEqual(status, 200)
             m = json.loads(data)
@@ -615,8 +626,26 @@ class TestHTTP(unittest.TestCase):
             status, _, data = self.req("GET", "/flash/firmware.bin")
             self.assertEqual(status, 200)
             self.assertEqual(data, b"fake-firmware.bin")
+            # versioned manifest: ?version= selects the older build
+            status, _, data = self.req(
+                "GET", "/flash/manifest.json?version=2.0.0")
+            self.assertEqual(status, 200)
+            m = json.loads(data)
+            self.assertEqual(m["version"], "2.0.0")
+            fw_paths = [p["path"] for p in m["builds"][0]["parts"]]
+            self.assertIn("/flash/firmware-2.0.0.bin", fw_paths)
+            self.assertNotIn("/flash/firmware.bin", fw_paths)
+            # unknown version -> 404
+            status, _, _ = self.req(
+                "GET", "/flash/manifest.json?version=9.9.9")
+            self.assertEqual(status, 404)
+            # versioned binary download
+            status, _, data = self.req("GET", "/flash/firmware-2.0.0.bin")
+            self.assertEqual(status, 200)
+            self.assertEqual(data, b"fake-firmware-2.0.0")
             # traversal attempts don't escape the firmware dir
-            for path in ("/flash/../spectra_server.py", "/flash/.bin"):
+            for path in ("/flash/../spectra_server.py", "/flash/.bin",
+                         "/flash/firmware-..%2f..%2f.bin"):
                 status, _, _ = self.req("GET", path)
                 self.assertIn(status, (400, 404), path)
         finally:

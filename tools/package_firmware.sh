@@ -41,6 +41,9 @@ FW_VERSION=$(grep -oP '#define FW_VERSION "\K[^"]+' src/main.cpp || true)
 if [ -n "$FW_VERSION" ]; then
   echo -n "$FW_VERSION" > "$OUT_DIR/VERSION"
   echo "firmware version: $FW_VERSION"
+  # Versioned copy for the /flash version picker (firmware.bin stays the
+  # unversioned "latest", also used for OTA).
+  cp "$OUT_DIR/firmware.bin" "$OUT_DIR/firmware-$FW_VERSION.bin"
 else
   echo "warning: could not extract FW_VERSION from src/main.cpp" >&2
 fi

@@ -228,6 +228,33 @@ class Server:
             pass
         return self.cfg.get("fw_version", "2.0.0")
 
+    def fw_versions(self):
+        """All published firmware versions, newest first. Discovered from
+        versioned binaries (firmware-<x.y.z>.bin) in the firmware dir."""
+        import re
+        versions = []
+        try:
+            names = os.listdir(FW_DIR)
+        except OSError:
+            names = []
+        for n in names:
+            m = re.fullmatch(r"firmware-(\d+\.\d+\.\d+)\.bin", n)
+            if m:
+                versions.append(m.group(1))
+        versions.sort(key=lambda v: tuple(int(x) for x in v.split(".")),
+                      reverse=True)
+        return versions
+
+    def fw_bin_for(self, version):
+        """File name of the firmware binary for a version, or None."""
+        import re
+        if not re.fullmatch(r"\d+\.\d+\.\d+", version or ""):
+            return None
+        name = f"firmware-{version}.bin"
+        if os.path.isfile(os.path.join(FW_DIR, name)):
+            return name
+        return None
+
     def photos_for(self, sub):
         """Per-user Google Photos controller (shared service OAuth client).
 
@@ -618,7 +645,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/flash":
             self._send(200, "text/html", _flash_page(
                 APP.flash_available(),
-                APP.fw_version()).encode(),
+                APP.fw_version(),
+                APP.fw_versions()).encode(),
                 {"Cache-Control": "no-store"})
             return
 
@@ -627,14 +655,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(404, {"ok": False,
                                  "error": "no firmware published"})
                 return
+            # ?version=x.y.z selects a published older build; default latest.
+            q = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
+            req_ver = (q.get("version") or [""])[0]
+            if req_ver:
+                fw_bin = APP.fw_bin_for(req_ver)
+                if not fw_bin:
+                    self._json(404, {"ok": False,
+                                     "error": "unknown firmware version"})
+                    return
+                ver = req_ver
+            else:
+                fw_bin = "firmware.bin"
+                ver = APP.fw_version()
+            parts = [(n if n != "firmware.bin" else fw_bin, o)
+                     for n, o in FLASH_PARTS]
             self._json(200, {
                 "name": "SpectraFrame",
-                "version": APP.fw_version(),
+                "version": ver,
                 "builds": [{
                     "chipFamily": "ESP32-S3",
                     "parts": [
                         {"path": f"/flash/{name}", "offset": offset}
-                        for name, offset in FLASH_PARTS
+                        for name, offset in parts
                     ],
                 }],
             })
@@ -642,8 +686,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if p.startswith("/flash/") and p.endswith(".bin"):
             part = p[len("/flash/"):]
-            # Strict allowlist: only the four published parts, flat names.
-            if part not in [n for n, _ in FLASH_PARTS] or "/" in part:
+            # Strict allowlist: the four published parts (flat names), plus
+            # versioned firmware binaries (firmware-x.y.z.bin) for the
+            # version picker. The regex rejects any path traversal.
+            allowed = [n for n, _ in FLASH_PARTS]
+            if part not in allowed:
+                if not (re.fullmatch(r"firmware-\d+\.\d+\.\d+\.bin", part) and
+                        APP.fw_bin_for(part[len("firmware-"):-len(".bin")])):
+                    self._json(404, {"ok": False, "error": "not found"})
+                    return
+            if "/" in part:
                 self._json(404, {"ok": False, "error": "not found"})
                 return
             path = os.path.join(FW_DIR, part)
@@ -1452,40 +1504,117 @@ window.addEventListener('load',function(){
 """ + SW_REGISTER + """</body></html>"""
 
 
-def _flash_page(available, version):
+def _flash_page(available, version, versions):
     """Public firmware-flash page (no login): Web Serial via esp-web-tools.
 
-    Lets anyone flash the EE02 over USB from their browser, then point
-    the frame at any SpectraFrame server instance in its Wi-Fi portal.
+    30/70 split: controls on the left, the embedded flash console on the
+    right. The <ewt-install-dialog> element is instantiated directly so the
+    whole flow (port pick, erase, write, verify, logs) stays in the page
+    instead of a popup. `versions` is the published firmware list, newest
+    first; the picker swaps the manifest the dialog flashes.
     """
+    import os as _os
     body = ""
     if available:
+        opts = "".join(
+            f"<option value='{v}'{' selected' if v == version else ''}>"
+            f"{v}{' (latest)' if v == version else ''}</option>"
+            for v in versions
+        )
+        picker = (f"<label class='fld'>Firmware version<br><select id='fwver'>"
+                  f"{opts}</select></label>" if len(versions) > 1 else
+                  f"<p class='muted'>Firmware <b>{version}</b> for ESP32-S3</p>")
+        parts_rows = "".join(
+            f"<tr><td class='mono'>{n}</td>"
+            f"<td class='mono'>0x{o:X}</td>"
+            f"<td class='num'>{_os.path.getsize(_os.path.join(FW_DIR, n if n != 'firmware.bin' else 'firmware.bin')) // 1024} KB</td></tr>"
+            for n, o in FLASH_PARTS
+        )
         body = f"""
-  <div class='card'>
-    <div class='feat'><div class='ic'>&#x1F50C;</div><div>
-      <b>Plug in the frame</b>
-      <span>Connect the EE02 driver board to this computer with USB-C.</span>
-    </div></div>
-    <div class='feat'><div class='ic'>&#x1F310;</div><div>
-      <b>Use a compatible browser</b>
-      <span>Chrome, Edge, or Opera on a computer (needs Web Serial). This
-      page must be served over HTTPS — it is.</span>
-    </div></div>
-    <div class='feat'><div class='ic'>&#x2699;&#xFE0F;</div><div>
-      <b>Flash, then configure</b>
-      <span>After flashing, the frame's Wi-Fi portal lets you point it at
-      <i>any</i> SpectraFrame server — this one or your own.</span>
-    </div></div>
+  <div class='flash-split'>
+    <div class='flash-left'>
+      <div class='card'>
+        <h3>Steps</h3>
+        <div class='feat'><div class='ic'>&#x1F50C;</div><div>
+          <b>Plug in the frame</b>
+          <span>Connect the EE02 driver board to this computer with USB-C.</span>
+        </div></div>
+        <div class='feat'><div class='ic'>&#x1F310;</div><div>
+          <b>Use a compatible browser</b>
+          <span>Chrome, Edge, or Opera on a computer (needs Web Serial).</span>
+        </div></div>
+        <div class='feat'><div class='ic'>&#x2699;&#xFE0F;</div><div>
+          <b>Flash, then configure</b>
+          <span>After flashing, the frame's Wi-Fi portal lets you point it at
+          <i>any</i> SpectraFrame server — this one or your own.</span>
+        </div></div>
+      </div>
+      <div class='card'>
+        <h3>Firmware</h3>
+        {picker}
+        <button class='btn' id='flash-go'>Connect &amp; flash</button>
+        <p class='fine'>Your browser will ask which serial port to use —
+        pick the one for the frame. The flash runs in the console
+        on the right.</p>
+      </div>
+    </div>
+    <div class='flash-right'>
+      <div class='card'>
+        <h3>Flash console</h3>
+        <div id='console-wrap'>
+          <p class='muted' id='console-idle'>Idle — pick a version and hit
+          <b>Connect &amp; flash</b>. Port selection, erase, write, verify
+          and the log all appear here.</p>
+        </div>
+      </div>
+      <div class='card'>
+        <h3>Image details</h3>
+        <table class='parts'><tr><th>File</th><th>Offset</th><th>Size</th></tr>
+        {parts_rows}</table>
+        <p class='fine'>Chip: ESP32-S3 · <span class='mono'>firmware.bin</span>
+        is also served for over-the-air updates.</p>
+      </div>
+    </div>
   </div>
-  <div class='card' style='text-align:center'>
-    <p class='muted'>Firmware <b>{version}</b> for ESP32-S3</p>
-    <esp-web-install-button manifest='/flash/manifest.json'>
-      <button class='btn' slot='activate'>Connect &amp; flash</button>
-    </esp-web-install-button>
-    <p class='fine' id='flash-note'>Your browser will ask which serial port
-    to use — pick the one for the frame.</p>
-  </div>
-  <script type='module' src='/static/esp-web-tools/install-button.js'></script>"""
+  <script type='module'>
+  import('/static/esp-web-tools/install-dialog.js');
+  (function(){{
+    var go=document.getElementById('flash-go');
+    var sel=document.getElementById('fwver');
+    var wrap=document.getElementById('console-wrap');
+    function manifestUrl(){{
+      var v=sel?sel.value:'{version}';
+      return '/flash/manifest.json?version='+encodeURIComponent(v);
+    }}
+    if(sel) sel.addEventListener('change',function(){{
+      // If a dialog is already open, swap its manifest for the next run.
+      var dlg=wrap.querySelector('ewt-install-dialog');
+      if(dlg) dlg.manifestPath=manifestUrl();
+    }});
+    go.addEventListener('click',async function(){{
+      if(!('serial' in navigator)){{
+        wrap.innerHTML='<p class=\"err\">Web Serial is not available. Use Chrome, Edge or Opera on a computer (HTTPS required).</p>';
+        return;
+      }}
+      var port;
+      try{{ port=await navigator.serial.requestPort(); }}
+      catch(e){{ return; }}  // user cancelled the port picker
+      try{{ await port.open({{baudRate:115200,bufferSize:8192}}); }}
+      catch(e){{
+        wrap.innerHTML='<p class=\"err\">Could not open the serial port: '+e.message+'</p>';
+        return;
+      }}
+      wrap.innerHTML='';
+      var dlg=document.createElement('ewt-install-dialog');
+      dlg.port=port;
+      dlg.manifestPath=manifestUrl();
+      dlg.addEventListener('closed',function(){{
+        try{{port.close();}}catch(e){{}}
+      }},{{once:true}});
+      wrap.appendChild(dlg);
+    }});
+  }})();
+  </script>"""
     else:
         body = """
   <div class='card' style='text-align:center'>
@@ -1501,6 +1630,28 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 .mono{font-family:ui-monospace,monospace;font-size:.9em}
 esp-web-install-button{--esp-tools-button-color:var(--blue);
   --esp-tools-button-text-color:#fff}
+/* Flash page 30/70 split */
+.flash-split{display:flex;gap:16px;align-items:flex-start}
+.flash-left{flex:0 0 30%;min-width:0;display:flex;flex-direction:column;gap:16px}
+.flash-right{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px}
+.flash-left .card,.flash-right .card{margin:0}
+.flash-split h3{margin:0 0 12px;font-size:1.05em}
+.fld{display:block;margin:0 0 12px;font-size:.9em}
+.fld select{margin-top:6px;max-width:100%;padding:8px 10px;border-radius:10px;
+  border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);
+  color:inherit;font-size:1em}
+#console-wrap{min-height:300px}
+#console-wrap ewt-install-dialog{display:block;width:100%}
+.parts{width:100%;border-collapse:collapse;font-size:.85em}
+.parts th,.parts td{padding:6px 8px;text-align:left;
+  border-bottom:1px solid rgba(255,255,255,.08)}
+.parts th{opacity:.7;font-weight:600}
+.parts td.num{text-align:right}
+.err{color:#ff8a80}
+@media(max-width:900px){
+  .flash-split{flex-direction:column}
+  .flash-left{flex:none;width:100%}
+}
 </style>
 </head><body>
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
