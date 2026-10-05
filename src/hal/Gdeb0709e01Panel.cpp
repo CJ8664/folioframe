@@ -2,6 +2,12 @@
 
 #include <TFT_eSPI.h>
 
+// TFT_eSPI_ESP32_S3.h selects CS_L/CS_H with `#if TFT_CS >= 32`. A D-pin name
+// evaluates to 0 there, so CS0 (GPIO44) would never be asserted.
+#if !defined(TFT_CS) || TFT_CS != 44
+#error "TFT_CS must be the literal GPIO number 44 (not D7); see platformio.ini"
+#endif
+
 // Old Seeed_GFX library (v1) EPaper class. Proven working on EE02 via CNX review.
 // Setup 518 (7.09" GDEB0709E01) is activated via src/User_Setup.h.
 static EPaper epaper;
