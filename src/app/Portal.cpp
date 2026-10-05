@@ -5,8 +5,39 @@
 bool Portal::ensureWiFi() {
   wm_.setConnectTimeout(30);
   wm_.setConfigPortalTimeout(300);
+  // Ask for the server URL on the same captive-portal screen as the Wi-Fi
+  // credentials: one setup step instead of two. Pre-fill the saved value so
+  // re-running the portal never wipes it.
+  serverParam_.setValue(config_->get().serverUrl,
+                        sizeof(config_->get().serverUrl));
+  if (!serverParamAdded_) {
+    wm_.addParameter(&serverParam_);
+    serverParamAdded_ = true;
+  }
   String ap = "SF-Setup-" + board_->deviceId();
-  return wm_.autoConnect(ap.c_str());
+  bool ok = wm_.autoConnect(ap.c_str());
+  if (ok) saveServerUrlFromPortal();
+  return ok;
+}
+
+void Portal::saveServerUrlFromPortal() {
+  String srv = serverParam_.getValue();
+  srv.trim();
+  Settings& s = config_->get();
+  if (srv == String(s.serverUrl)) return;  // unchanged (or still blank)
+  Settings cand = s;  // validate the full record, same as the /save handler
+  strncpy(cand.serverUrl, srv.c_str(), sizeof(cand.serverUrl) - 1);
+  cand.serverUrl[sizeof(cand.serverUrl) - 1] = '\0';
+  String err;
+  if (!Config::validate(cand, err)) {
+    Serial.printf("portal server URL rejected: %s\n", err.c_str());
+    return;  // keep the old value; the LAN settings portal still enforces it
+  }
+  // Changing servers invalidates the pairing token, same as /save.
+  if (String(s.serverUrl) != srv) config_->clearDeviceToken();
+  s = cand;
+  config_->save();
+  dirty_ = true;
 }
 
 bool Portal::hasWiFiCreds() { return wm_.getWiFiIsSaved(); }

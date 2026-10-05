@@ -30,7 +30,12 @@ uint16_t Gdeb0709e01Panel::nibbleToRgb565(uint8_t nibble) {
 
 bool Gdeb0709e01Panel::begin() {
   if (!psramFound()) return false;
-  display.begin();
+  // Do NOT ignore begin()'s result: a failed init makes every later draw a
+  // silent no-op, which looks exactly like a dead panel.
+  if (!display.begin()) {
+    Serial.printf("panel begin failed: %s\n", display.lastResult().message);
+    return false;
+  }
   return true;
 }
 
