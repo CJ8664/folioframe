@@ -9,6 +9,8 @@ bool Portal::ensureWiFi() {
   return wm_.autoConnect(ap.c_str());
 }
 
+bool Portal::hasWiFiCreds() { return wm_.getWiFiIsSaved(); }
+
 int Portal::parseTimeToMin(const String& hhmm) {
   int h = hhmm.substring(0, 2).toInt();
   int m = hhmm.substring(3, 5).toInt();

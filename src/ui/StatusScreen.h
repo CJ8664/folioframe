@@ -8,6 +8,7 @@ class StatusScreen {
   explicit StatusScreen(Panel* panel) : panel_(panel) {}
 
   void showPortal(const char* apName, const char* url);
+  void showSettings(const char* url);
   void showPairing(const char* claimCode, const char* where);
   void showPaired();
   void showError(const char* title, const char* detail);

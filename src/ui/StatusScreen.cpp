@@ -10,6 +10,15 @@ void StatusScreen::showPortal(const char* apName, const char* url) {
   panel_->drawStatus("SpectraFrame setup", lines, 6);
 }
 
+void StatusScreen::showSettings(const char* url) {
+  // The frame is on the home Wi-Fi; the settings page lives at its LAN IP.
+  const char* lines[] = {
+      "On your phone or computer,", "open this address:",
+      url, "", "to configure this frame.",
+  };
+  panel_->drawStatus("Frame settings", lines, 5);
+}
+
 void StatusScreen::showPairing(const char* claimCode, const char* where) {
   const char* lines[] = {
       "1. Open your SpectraFrame", "   console in a browser",

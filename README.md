@@ -52,6 +52,10 @@ See [docs/SELFHOST.md](docs/SELFHOST.md) and
 5. The screen shows a claim code — enter it at `<server>/claim` in the
    console. Done. The frame fetches its first photo and sleeps.
 
+No PlatformIO? If the admin published the binaries, the server's public
+`/flash` page (no login) flashes the frame over USB straight from Chrome
+or Edge — then point it at any server in its Wi-Fi portal.
+
 ## Layout
 
 | Dir | What's inside | Swap rule |

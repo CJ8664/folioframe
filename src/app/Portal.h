@@ -18,6 +18,10 @@ class Portal {
   // Ensure Wi-Fi is connected (blocking, with portal fallback).
   bool ensureWiFi();
 
+  // True when Wi-Fi credentials are stored (i.e. ensureWiFi will not need
+  // to start the setup AP).
+  bool hasWiFiCreds();
+
   // Run the settings portal until timeout or BTN1 press. Returns true if
   // any setting changed (caller should re-fetch before sleeping).
   bool run(uint32_t timeoutMs);

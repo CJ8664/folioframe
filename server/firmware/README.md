@@ -1,13 +1,31 @@
-# OTA firmware binaries
+# Firmware binaries
 
-Drop a built `firmware.bin` here and it gets baked into the Docker image
-(the server looks for `server/firmware/firmware.bin`).
+Four files live here (all from one `pio run` of the `ee02` env):
 
-Build it with PlatformIO (`pio run` — the binary lands in
-`.pio/build/ee02/firmware.bin`), copy it here as `firmware.bin`, bump
-`"build"` in your server config to the firmware's `FW_BUILD` number, and
-redeploy. Devices whose build is older will download, MD5-verify, and
-flash it on their next wake.
+| File | Flash offset | Also used for |
+|---|---|---|
+| `bootloader.bin` | `0x0` | web flash only |
+| `partitions.bin` | `0x8000` | web flash only |
+| `boot_app0.bin` | `0xe000` | web flash only |
+| `firmware.bin` | `0x10000` | web flash **and** OTA |
 
-Nothing is published until both the binary exists here AND the config
-build number is higher than what the devices run.
+Where they come from after `pio run`:
+
+- `.pio/build/ee02/bootloader.bin`
+- `.pio/build/ee02/partitions.bin`
+- `.pio/build/ee02/firmware.bin`
+- `boot_app0.bin` lives in the Arduino-ESP32 package:
+  `~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin`
+
+Copy all four here, bump `"build"` (and `"fw_version"`) in the server
+config, and redeploy. Then:
+
+- **Web flash** — the public `/flash` page (no login) offers the
+  esp-web-tools install button. Anyone can flash a frame over USB and
+  then point it at any SpectraFrame server in its Wi-Fi portal.
+- **OTA** — devices whose `FW_BUILD` is lower than `"build"` download
+  `firmware.bin`, MD5-verify it, and flash it on next wake.
+
+The `/flash` page hides itself until all four files exist. Nothing here
+contains secrets — the firmware holds no credentials (Wi-Fi and the
+server URL are entered on the device's own portal).

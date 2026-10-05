@@ -7,24 +7,29 @@ proven otherwise.
 - [ ] Builds in PlatformIO with `seeed_xiao_esp32s3`, PSRAM enabled
 - [ ] `Seeed_Product::Seeed_ePaper_7INCH09_C` compiles (if renamed, one-line fix
       in `src/hal/Gdeb0709e01Panel.cpp`)
-- [ ] Flashes over USB-C; serial shows `SpectraFrame 1.0.0 build 1`
-- [ ] First boot with no Wi-Fi creds → panel shows setup screen, AP
-      `SF-Setup-SF-XXXXXX` appears
+- [ ] Flashes over USB-C (`pio run -t upload`); serial shows
+      `SpectraFrame 2.0.0 build 2`
+- [ ] First boot with no Wi-Fi creds → panel shows the setup screen with the
+      `SF-Setup-sf-xxxxxxxxxxxx` AP name and `http://192.168.4.1`
+- [ ] Web flash alternative: publish the four `server/firmware/*.bin` files,
+      open the server's public `/flash` page in Chrome/Edge, flash over USB
 
 ## Provisioning & portal
-- [ ] Join the setup AP → captive portal opens (or browse http://192.168.4.1)
-- [ ] Enter 2.4 GHz Wi-Fi creds → device connects, portal shows settings page
-- [ ] Settings page: change interval to 15 min, save → "Saved."
-- [ ] Invalid URL (`ftp://…`) → 400 with a clear message
-- [ ] BTN1 exits the portal
+- [ ] Join the setup AP → WiFiManager captive portal for Wi-Fi creds
+- [ ] After Wi-Fi connects → panel shows the settings page URL (the frame's
+      LAN IP, e.g. `http://192.168.1.42`) — open it on your phone/computer
+- [ ] Enter the server URL (`https://frame.example.com`) → save → "Saved."
+- [ ] Invalid server URL (`ftp://…`) → 400 with a clear message
+- [ ] BTN1 → portal; BTN1 again exits the portal
+- [ ] Panel shows the `XXXX-XXXX` claim code; enter it at `<server>/claim`
+      → frame pairs and fetches its first photo
 
 ## Frame fetch & paint
-- [ ] Run `python3 tools/frame_server.py` on the LAN
-- [ ] Set Image URL to `http://<host>:8765/frame`, exit portal
-- [ ] Panel paints the 6-bar test pattern (~30 s refresh)
+- [ ] Panel paints the current frame (~30 s refresh)
 - [ ] Serial shows `304: image unchanged` on the next wake (no repaint)
-- [ ] Change `BUILD`/frame content → next wake repaints
-- [ ] Point URL at a 404 → panel keeps the old image, retries next wake
+- [ ] Push a photo from the console → next wake paints it
+- [ ] Unpair from the console → next wake shows "Unpaired", then re-pairs
+      with a fresh claim code
 
 ## Power
 - [ ] **Multimeter check:** compare `battery_mv` in `/debug` against a meter

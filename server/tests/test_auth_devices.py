@@ -571,6 +571,59 @@ class TestHTTP(unittest.TestCase):
         resp = self._raw_request(raw)
         self.assertIn(b"403", resp.split(b"\r\n")[0])
 
+    def test_flash_page_is_public_without_binaries(self):
+        # No login: /flash explains that nothing is published yet.
+        status, _, data = self.req("GET", "/flash")
+        self.assertEqual(status, 200)
+        self.assertIn(b"No firmware published", data)
+        self.assertNotIn(b"<esp-web-install-button", data)
+        # manifest + binaries 404 cleanly
+        for path in ("/flash/manifest.json", "/flash/firmware.bin",
+                     "/flash/bootloader.bin", "/flash/evil.bin"):
+            status, _, _ = self.req("GET", path)
+            self.assertEqual(status, 404, path)
+
+    def test_flash_manifest_and_binaries_when_published(self):
+        tmp = tempfile.mkdtemp()
+        for name, _ in spectra_server.FLASH_PARTS:
+            with open(os.path.join(tmp, name), "wb") as f:
+                f.write(b"fake-" + name.encode())
+        old = spectra_server.FW_DIR
+        spectra_server.FW_DIR = tmp
+        try:
+            status, _, data = self.req("GET", "/flash")
+            self.assertEqual(status, 200)
+            self.assertIn(b"<esp-web-install-button", data)
+            status, hdrs, data = self.req("GET", "/flash/manifest.json")
+            self.assertEqual(status, 200)
+            m = json.loads(data)
+            self.assertEqual(m["name"], "SpectraFrame")
+            self.assertEqual(m["builds"][0]["chipFamily"], "ESP32-S3")
+            parts = m["builds"][0]["parts"]
+            self.assertEqual(
+                [(p["path"], p["offset"]) for p in parts],
+                [(f"/flash/{n}", o)
+                 for n, o in spectra_server.FLASH_PARTS])
+            status, _, data = self.req("GET", "/flash/firmware.bin")
+            self.assertEqual(status, 200)
+            self.assertEqual(data, b"fake-firmware.bin")
+            # traversal attempts don't escape the firmware dir
+            for path in ("/flash/../spectra_server.py", "/flash/.bin"):
+                status, _, _ = self.req("GET", path)
+                self.assertIn(status, (400, 404), path)
+        finally:
+            spectra_server.FW_DIR = old
+
+    def test_esp_web_tools_static_subpath(self):
+        status, hdrs, data = self.req(
+            "GET", "/static/esp-web-tools/install-button.js")
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", hdrs.get("Content-Type", ""))
+        self.assertTrue(data.startswith(b"const "))
+        # no escaping the vendored dir
+        status, _, _ = self.req("GET", "/static/esp-web-tools/../icon-192.png")
+        self.assertEqual(status, 404)
+
     def test_ota_version_is_firmware_manifest(self):        # The firmware's OtaManifest parser needs "build=N" lines; a bare
         # number would be rejected and OTA would silently never happen.
         cookie, csrf = self.login()

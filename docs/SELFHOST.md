@@ -105,17 +105,26 @@ Keep `server/config.json` backed up too — it holds your OAuth client secret.
 - Resource use is tiny: the container idles near zero and wakes to render
   frames on the rotation interval.
 
-## Publishing firmware updates (OTA)
+## Publishing firmware (OTA + web flash)
 
-1. Build the firmware in PlatformIO (`pio run`). The binary is at
-   `.pio/build/ee02/firmware.bin`.
-2. Copy it to `server/firmware/firmware.bin` in this repo and rebuild /
-   redeploy the container (it's baked into the image).
-3. Bump `"build"` in your config to the firmware's `FW_BUILD` number
-   (see `src/main.cpp`) and redeploy.
+1. Build the firmware in PlatformIO (`pio run`, env `ee02`).
+2. Copy the four binaries into `server/firmware/`:
+   - `.pio/build/ee02/bootloader.bin`
+   - `.pio/build/ee02/partitions.bin`
+   - `.pio/build/ee02/firmware.bin`
+   - `boot_app0.bin` from the Arduino-ESP32 package
+     (`~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin`)
+3. Bump `"build"` (and `"fw_version"`) in your config to match the
+   firmware's `FW_BUILD` / `FW_VERSION` (`src/main.cpp`), then redeploy.
 
-Devices check `GET /v1/device/ota/version` on every wake. When the
-server's build number is higher than theirs, they download
-`firmware.bin`, verify its MD5 against the manifest, and flash it —
-never on a low battery. No binary published → the version endpoint just
-reports the build number and nothing happens.
+Then two things work:
+
+- **Web flash** — the server's public `/flash` page (no login) offers a
+  browser-based USB flasher (esp-web-tools, self-hosted). Anyone can flash
+  a frame and then point it at any SpectraFrame server in its Wi-Fi portal.
+  The page hides itself until all four binaries exist.
+- **OTA** — devices check `GET /v1/device/ota/version` on every wake.
+  When the server's build number is higher than theirs, they download
+  `firmware.bin`, verify its MD5 against the manifest, and flash it —
+  never on a low battery. No binary published → the version endpoint just
+  reports the build number and nothing happens.

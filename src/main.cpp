@@ -9,6 +9,7 @@
 //
 // Buttons: BTN1 portal/settings, BTN2 fetch now, BTN3 pin/freeze toggle.
 #include <Arduino.h>
+#include <WiFi.h>
 #include <esp_sleep.h>
 
 #include "../include/board_config.h"
@@ -121,9 +122,14 @@ void setup() {
         break;
     }
     if (wakeButton() == ButtonId::Btn1) {
-      status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
-                        "http://192.168.4.1");
+      if (!portal.hasWiFiCreds()) {
+        status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
+                          "http://192.168.4.1");
+      }
       portal.ensureWiFi();
+      // The settings portal runs on the home Wi-Fi: show the LAN address.
+      String url = "http://" + WiFi.localIP().toString();
+      status.showSettings(url.c_str());
       bool dirty = portal.run(10 * 60 * 1000);
       if (!dirty) {
         panel.sleep();
@@ -139,6 +145,12 @@ void setup() {
   }
 
   // --- Network ---
+  // No Wi-Fi credentials yet (very first boot): point the user at the
+  // setup AP before WiFiManager starts its captive portal.
+  if (!portal.hasWiFiCreds()) {
+    status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
+                      "http://192.168.4.1");
+  }
   if (!portal.ensureWiFi()) panic("Wi-Fi failed", "Check credentials");
   bool clockOk = timeSync.begin(config.get().timezone);
   if (!clockOk) Serial.println("WARN: clock not synced");
@@ -146,11 +158,12 @@ void setup() {
   Settings& s = config.get();
 
   // --- Server URL: required before anything else. First boot (or a wipe)
-  // drops into the portal so the user can type it.
+  // drops into the settings portal so the user can type it. The portal
+  // runs on the home Wi-Fi at this point, so show the frame's real LAN
+  // address -- not the setup-AP address.
   while (!s.serverUrl[0]) {
-    status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
-                      "http://192.168.4.1");
-    portal.ensureWiFi();
+    String url = "http://" + WiFi.localIP().toString();
+    status.showSettings(url.c_str());
     portal.run(10 * 60 * 1000);
     config.load();  // re-read; portal saved to NVS
     s = config.get();

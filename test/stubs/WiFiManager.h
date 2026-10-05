@@ -5,4 +5,5 @@ class WiFiManager {
   void setConnectTimeout(int) {}
   void setConfigPortalTimeout(int) {}
   bool autoConnect(const char*) { return true; }
+  bool getWiFiIsSaved() { return true; }
 };

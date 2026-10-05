@@ -72,6 +72,16 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 STATE_PATH = os.path.join(HERE, "state.json")
 DATA_DIR = os.path.join(HERE, "data")
 FW_PATH = os.path.join(HERE, "firmware", "firmware.bin")
+FW_DIR = os.path.join(HERE, "firmware")
+# Web-flash parts for the ESP32-S3 (offsets per the ESP-IDF S3 flash layout;
+# matches what `pio run` produces for the ee02 env). All four must be
+# published for /flash to be offered.
+FLASH_PARTS = [
+    ("bootloader.bin", 0),
+    ("partitions.bin", 32768),    # 0x8000
+    ("boot_app0.bin", 57344),     # 0xe000
+    ("firmware.bin", 65536),      # 0x10000
+]
 
 W, H = 1200, 1600
 
@@ -92,6 +102,9 @@ DEFAULT_CONFIG = {
     # server/firmware/firmware.bin. Devices whose FW_BUILD is lower will
     # download and flash it (battery-gated, MD5-verified).
     "build": "1",
+    # Shown on the public /flash page and in its esp-web-tools manifest.
+    # Keep in sync with FW_VERSION in src/main.cpp.
+    "fw_version": "2.0.0",
     # The service's Google OAuth client (admin one-time setup): used for
     # "Sign in with Google" and for Google Photos. Users never see these
     # values. Get them from Google Cloud Console -> your project ->
@@ -196,6 +209,11 @@ class Server:
     def google_configured(self):
         cid, csec = self._google_creds()
         return bool(cid and csec)
+
+    def flash_available(self):
+        """True when all four web-flash binaries are published."""
+        return all(os.path.isfile(os.path.join(FW_DIR, name))
+                   for name, _ in FLASH_PARTS)
 
     def photos_for(self, sub):
         """Per-user Google Photos controller (shared service OAuth client).
@@ -582,10 +600,60 @@ class Handler(http.server.BaseHTTPRequestHandler):
                          "application/manifest+json")
             return
 
+        if p == "/flash":
+            self._send(200, "text/html", _flash_page(
+                APP.flash_available(),
+                APP.cfg.get("fw_version", "2.0.0")).encode())
+            return
+
+        if p == "/flash/manifest.json":
+            if not APP.flash_available():
+                self._json(404, {"ok": False,
+                                 "error": "no firmware published"})
+                return
+            self._json(200, {
+                "name": "SpectraFrame",
+                "version": APP.cfg.get("fw_version", "2.0.0"),
+                "builds": [{
+                    "chipFamily": "ESP32-S3",
+                    "parts": [
+                        {"path": f"/flash/{name}", "offset": offset}
+                        for name, offset in FLASH_PARTS
+                    ],
+                }],
+            })
+            return
+
+        if p.startswith("/flash/") and p.endswith(".bin"):
+            part = p[len("/flash/"):]
+            # Strict allowlist: only the four published parts, flat names.
+            if part not in [n for n, _ in FLASH_PARTS] or "/" in part:
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            path = os.path.join(FW_DIR, part)
+            if not os.path.isfile(path):
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            with open(path, "rb") as f:
+                self._send(200, "application/octet-stream", f.read(),
+                           {"Cache-Control": "public, max-age=3600"})
+            return
+
         if p == "/sw.js":
             # Service workers must not be cached aggressively.
             self._static("sw.js", "application/javascript",
                          {"Cache-Control": "no-cache"})
+            return
+
+        if p.startswith("/static/esp-web-tools/"):
+            name = p[len("/static/esp-web-tools/"):]
+            # Only the vendored esp-web-tools chunks, flat in that dir.
+            if (not name or "/" in name or name.startswith(".") or
+                    not name.endswith(".js")):
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            self._static("esp-web-tools/" + name, "application/javascript",
+                         {"Cache-Control": "public, max-age=86400"})
             return
 
         if p.startswith("/static/"):
@@ -1318,6 +1386,11 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <span class='muted'>Add it to your home screen for the full app feel.</span></div>
     <button class='btn sm' id='installbtn' style='display:none'>Install app</button>
   </div>
+  <div class='card' style='text-align:center'>
+    <span class='muted'>Setting up a new frame?</span><br>
+    <a class='btn ghost sm' href='/flash' style='margin-top:8px'>Flash firmware over USB</a>
+    <p class='fine'>No login needed — flash here, then point the frame at any server.</p>
+  </div>
 </main>
 <script>
 function showError(m){document.getElementById('err').textContent=m;}
@@ -1359,6 +1432,74 @@ window.addEventListener('load',function(){
 });
 </script>
 """ + SW_REGISTER + """</body></html>"""
+
+
+def _flash_page(available, version):
+    """Public firmware-flash page (no login): Web Serial via esp-web-tools.
+
+    Lets anyone flash the EE02 over USB from their browser, then point
+    the frame at any SpectraFrame server instance in its Wi-Fi portal.
+    """
+    body = ""
+    if available:
+        body = f"""
+  <div class='card'>
+    <div class='feat'><div class='ic'>&#x1F50C;</div><div>
+      <b>Plug in the frame</b>
+      <span>Connect the EE02 driver board to this computer with USB-C.</span>
+    </div></div>
+    <div class='feat'><div class='ic'>&#x1F310;</div><div>
+      <b>Use a compatible browser</b>
+      <span>Chrome, Edge, or Opera on a computer (needs Web Serial). This
+      page must be served over HTTPS — it is.</span>
+    </div></div>
+    <div class='feat'><div class='ic'>&#x2699;&#xFE0F;</div><div>
+      <b>Flash, then configure</b>
+      <span>After flashing, the frame's Wi-Fi portal lets you point it at
+      <i>any</i> SpectraFrame server — this one or your own.</span>
+    </div></div>
+  </div>
+  <div class='card' style='text-align:center'>
+    <p class='muted'>Firmware <b>{version}</b> for ESP32-S3</p>
+    <esp-web-install-button manifest='/flash/manifest.json'>
+      <button class='btn' slot='activate'>Connect &amp; flash</button>
+    </esp-web-install-button>
+    <p class='fine' id='flash-note'>Your browser will ask which serial port
+    to use — pick the one for the frame.</p>
+  </div>
+  <script type='module' src='/static/esp-web-tools/install-button.js'></script>"""
+    else:
+        body = """
+  <div class='card' style='text-align:center'>
+    <p><b>No firmware published yet.</b></p>
+    <p class='muted'>The admin hasn't published the flash binaries on this
+    server. Ask them to drop the four <span class='mono'>.bin</span> files
+    into <span class='mono'>server/firmware/</span> and redeploy.</p>
+  </div>"""
+    return ("""<html><head><meta name='viewport'
+content='width=device-width,initial-scale=1,viewport-fit=cover'>
+<title>Flash SpectraFrame firmware</title>
+""" + PWA_HEAD + """<style>""" + GLASS_CSS + """
+.mono{font-family:ui-monospace,monospace;font-size:.9em}
+esp-web-install-button{--esp-tools-button-color:var(--blue);
+  --esp-tools-button-text-color:#fff}
+</style>
+</head><body>
+<div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
+<div class='blob b3'></div></div>
+<main class='sheet'>
+  <div class='topbar'><div class='topbar-in'>
+    <span class='brand'><img src='/static/icon-192.png' alt=''>SpectraFrame</span>
+    <span class='sp'></span>
+    <a class='btn ghost sm' href='/'>Home</a>
+  </div></div>
+  <div class='card hero'>
+    <h1>Flash the frame</h1>
+    <p class='tag'>Install SpectraFrame firmware over USB, right from
+    this page. No login needed.</p>
+  </div>""" + body + """
+</main>
+""" + SW_REGISTER + """</body></html>""")
 
 
 CONSOLE_HTML = """<html><head><meta name='viewport'
