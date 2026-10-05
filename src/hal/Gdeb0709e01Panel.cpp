@@ -32,15 +32,17 @@ bool Gdeb0709e01Panel::begin() {
   if (!psramFound()) return false;
   // Belt-and-braces power/reset: the library should drive EN (GPIO43) and
   // RST (GPIO38), but if the panel is unresponsive we ensure it ourselves.
-  // EN high = panel power on; RST low pulse = hardware reset.
+  // EN high = panel power on; RST low pulse = hardware reset. Generous
+  // delays: the panel needs time for its power regulator and controller
+  // to stabilize before accepting commands.
   pinMode(43, OUTPUT);
   digitalWrite(43, HIGH);
-  delay(100);
+  delay(500);
   pinMode(38, OUTPUT);
   digitalWrite(38, LOW);
-  delay(20);
+  delay(200);
   digitalWrite(38, HIGH);
-  delay(20);
+  delay(500);
   Serial.printf("panel pre-begin, BUSY=%d\n", digitalRead(4));
   // Do NOT ignore begin()'s result: a failed init makes every later draw a
   // silent no-op, which looks exactly like a dead panel.
