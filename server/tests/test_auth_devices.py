@@ -378,6 +378,37 @@ class TestHTTP(unittest.TestCase):
             self.assertIn("rel='manifest'", body, path)
             self.assertIn("serviceWorker", body, path)
 
+    def test_nosniff_header_set(self):
+        # Every response carries X-Content-Type-Options: nosniff so
+        # text/plain error bodies can't be sniffed as HTML (XSS).
+        for path in ("/", "/api/config", "/manifest.webmanifest",
+                     "/sw.js", "/static/icon-192.png"):
+            status, hdrs, _ = self.req("GET", path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(hdrs.get("X-Content-Type-Options"), "nosniff",
+                             path)
+
+    def test_oversized_json_body_rejected(self):
+        # A huge Content-Length on a JSON endpoint is rejected (400),
+        # not read into memory.
+        status, _, _ = self.req(
+            "POST", "/api/auth/token",
+            body=" ",
+            headers={"Content-Type": "application/json",
+                     "Content-Length": str(2 * 1024 * 1024)})
+        self.assertEqual(status, 400)
+
+    def test_oversized_upload_rejected(self):
+        cookie, csrf = self.login()
+        h = {"Cookie": cookie, "X-CSRF-Token": csrf,
+             "Content-Type": "multipart/form-data; boundary=B",
+             "Content-Length": str(26 * 1024 * 1024)}
+        status, _, data = self.req(
+            "POST", "/api/devices/sf-aaaa1111bbbb/photos/upload",
+            body=" ", headers=h)
+        self.assertEqual(status, 400)
+        self.assertIn(b"too large", data)
+
     def test_login_validates_token(self):
         for body in ({}, {"id_token": "forged"}):
             status, _, _ = self.req(

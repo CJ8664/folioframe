@@ -462,6 +462,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # Block MIME sniffing: text/plain error bodies must never be
+        # interpreted as HTML (XSS via sniffed error content).
+        self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -480,8 +483,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with open(path, "rb") as f:
             self._send(200, ctype, f.read(), extra)
 
-    def _read_json(self):
-        length = int(self.headers.get("Content-Length", 0))
+    def _read_json(self, max_bytes=1024 * 1024):
+        # Cap request bodies: an unbounded read lets anyone (even
+        # unauthenticated, on public routes) exhaust server memory.
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            return None
+        if length < 0 or length > max_bytes:
+            return None
         raw = self.rfile.read(length) if length else b""
         try:
             return json.loads(raw.decode() or "{}")
@@ -757,8 +767,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     gp.oauth.exchange_code(code, redirect_uri)
                     self._redirect("/")
                 except Exception as e:
+                    # Never echo provider exception details to the browser
+                    # (they can contain response bodies); log server-side.
+                    print(f"gphotos OAuth exchange failed for {sub}: "
+                          f"{type(e).__name__}")
                     self._send(500, "text/plain",
-                                f"connect failed: {e}".encode())
+                               b"connect failed: please try again")
             return
 
         if p == "/api/gphotos/status":
@@ -907,7 +921,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not dev or dev.get("owner") != sub:
                 self._json(404, {"ok": False})
                 return
-            length = int(self.headers.get("Content-Length", 0))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                length = 0
+            if length <= 0 or length > 25 * 1024 * 1024:
+                self._json(400, {"ok": False,
+                                 "error": "photo too large (max 25 MB)"})
+                return
             body = self.rfile.read(length) if length else b""
             parts = _parse_multipart(body,
                                      self.headers.get("Content-Type", ""))
@@ -1404,7 +1425,7 @@ async function renderPhotos(){
   }else{
     let st='';
     if(g.picking)
-      st=`<p class='msg'>Picker open — <a style='color:#fff' href='${g.picker_uri}' target='_blank' rel='noopener'>continue choosing photos</a>, then come back here.</p>`;
+      st=`<p class='msg'>Picker open — <a style='color:#fff' href='${esc(g.picker_uri)}' target='_blank' rel='noopener'>continue choosing photos</a>, then come back here.</p>`;
     else if(g.pick_status==='error')
       st=`<p class='msg err'>Couldn't finish picking: ${esc(g.pick_error)} Please try again.</p>`;
     sub.textContent='Connected — your picks live on this server.';
