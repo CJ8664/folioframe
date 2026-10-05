@@ -24,8 +24,8 @@
 #include "hal/Gdeb0709e01Panel.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "3.6.0"
-#define FW_BUILD 9
+#define FW_VERSION "3.7.0"
+#define FW_BUILD 10
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
