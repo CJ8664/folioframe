@@ -1,10 +1,10 @@
 #include "Gdeb0709e01Panel.h"
 
-#include <Seeed_GFX.h>
+#include <TFT_eSPI.h>
 
-// Official product target for the 7.09" Spectra 6 panel (added Sep 2026).
-// Compile will fail here if Seeed renames it — that is intentional.
-static Seeed_GFX display(Seeed_Product::Seeed_ePaper_7INCH09_C);
+// Old Seeed_GFX library (v1) EPaper class. Proven working on EE02 via CNX review.
+// Setup 518 (7.09" GDEB0709E01) is activated via src/User_Setup.h.
+static EPaper epaper;
 
 // Convert in bands to bound working memory: 64 rows * 1200 px * 2 B.
 static const int kBandRows = 64;
@@ -30,11 +30,8 @@ uint16_t Gdeb0709e01Panel::nibbleToRgb565(uint8_t nibble) {
 
 bool Gdeb0709e01Panel::begin() {
   if (!psramFound()) return false;
-  // Belt-and-braces power/reset: the library should drive EN (GPIO43) and
-  // RST (GPIO38), but if the panel is unresponsive we ensure it ourselves.
-  // EN high = panel power on; RST low pulse = hardware reset. Generous
-  // delays: the panel needs time for its power regulator and controller
-  // to stabilize before accepting commands.
+  // The old library's setup handles EN/RST via the board config.
+  // We still do belt-and-braces here.
   pinMode(43, OUTPUT);
   digitalWrite(43, HIGH);
   delay(500);
@@ -44,15 +41,8 @@ bool Gdeb0709e01Panel::begin() {
   digitalWrite(38, HIGH);
   delay(500);
   Serial.printf("panel pre-begin, BUSY=%d\n", digitalRead(4));
-  // Do NOT ignore begin()'s result: a failed init makes every later draw a
-  // silent no-op, which looks exactly like a dead panel.
-  if (!display.begin()) {
-    Serial.printf("panel begin failed: %s\n", display.lastResult().message);
-    return false;
-  }
-  // BUSY (GPIO4) is the only signal back from the panel. Sample it here:
-  // a live panel idles HIGH and pulls LOW while refreshing. Stuck HIGH
-  // through a refresh means the panel never executed it (power/cable).
+  epaper.begin();
+  // Old library begin() is void; check BUSY to see if panel is alive.
   Serial.printf("panel begin ok, BUSY=%d\n", digitalRead(4));
   return true;
 }
@@ -60,7 +50,7 @@ bool Gdeb0709e01Panel::begin() {
 bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
   PanelDims d = dims();
   const size_t expect = (size_t)d.width * d.height / 2;
-  if (!buf || len != expect) return false;  // refuse to paint garbage
+  if (!buf || len != expect) return false;
 
   uint16_t* band =
       (uint16_t*)ps_malloc((size_t)d.width * kBandRows * sizeof(uint16_t));
@@ -78,30 +68,28 @@ bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
         dstRow[x + 1] = nibbleToRgb565(packed & 0x0F);
       }
     }
-    display.pushImage(0, y0, d.width, rows, band);
+    epaper.pushImage(0, y0, d.width, rows, band);
   }
   free(band);
-  display.update();  // full refresh (~30 s on Spectra 6)
+  epaper.update();
   return true;
 }
 
 bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
                                   int numLines) {
   Serial.println("drawStatus: fillScreen");
-  display.fillScreen(0xFFFF);
+  epaper.fillScreen(TFT_WHITE);
   Serial.println("drawStatus: drawString");
   int y = 60;
-  display.drawString(title, 60, y, 4);
+  epaper.drawString(title, 60, y, 4);
   y += 80;
   for (int i = 0; i < numLines; i++) {
-    display.drawString(lines[i], 60, y, 2);
+    epaper.drawString(lines[i], 60, y, 2);
     y += 48;
   }
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();
-  display.update();
-  // A real Spectra 6 full refresh holds BUSY low ~27 s. If this returns in
-  // ~1 s with BUSY stuck HIGH, the panel never executed the refresh.
+  epaper.update();
   uint32_t dt = millis() - t0;
   Serial.printf("update done in %lums, BUSY=%d\n", dt, digitalRead(4));
   if (dt < 5000 && digitalRead(4)) {
@@ -112,4 +100,4 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
   return true;
 }
 
-void Gdeb0709e01Panel::sleep() { display.panel().sleep(); }
+void Gdeb0709e01Panel::sleep() { epaper.sleep(); }
