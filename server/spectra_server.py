@@ -1188,6 +1188,7 @@ input::placeholder{color:var(--faint)}
 """
 
 PWA_HEAD = """
+<meta charset='utf-8'>
 <link rel='manifest' href='/manifest.webmanifest'>
 <meta name='theme-color' content='#070a13'>
 <meta name='mobile-web-app-capable' content='yes'>
