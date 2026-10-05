@@ -76,4 +76,4 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
   return true;
 }
 
-void Gdeb0709e01Panel::sleep() { display.sleep(); }
+void Gdeb0709e01Panel::sleep() { display.panel().sleep(); }
