@@ -1,13 +1,7 @@
 #include "StatusScreen.h"
 
 void StatusScreen::showPortal(const char* apName, const char* url) {
-  const char* lines[] = {
-      "1. Join Wi-Fi network:", apName,
-      "2. Open this address:", url,
-      "3. Enter your Wi-Fi details", "",
-      "Press BTN1 to exit setup.",
-  };
-  panel_->drawStatus("SpectraFrame setup", lines, 6);
+  panel_->drawSetupQR("SpectraFrame Setup", apName, url);
 }
 
 void StatusScreen::showSettings(const char* url) {

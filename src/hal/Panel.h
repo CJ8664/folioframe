@@ -40,6 +40,15 @@ class Panel {
   virtual bool drawStatus(const char* title, const char* lines[],
                           int numLines) = 0;
 
+  // Setup screen with QR code for the portal URL. Default falls back to
+  // drawStatus for panels without QR support.
+  virtual bool drawSetupQR(const char* title, const char* apName,
+                           const char* url) {
+    const char* lines[] = {"1. Join Wi-Fi:", apName, "2. Scan QR or open:",
+                           url, "3. Enter Wi-Fi details"};
+    return drawStatus(title, lines, 5);
+  }
+
   virtual void sleep() = 0;  // panel low-power mode
 
   // v2 hook: on-device JPEG decode path. Default: unsupported.

@@ -12,8 +12,10 @@ class Gdeb0709e01Panel : public Panel {
   bool supportsPartial() const override { return false; }
   bool drawPacked4bpp(const uint8_t* buf, size_t len) override;
   bool drawStatus(const char* title, const char* lines[], int numLines) override;
+  bool drawSetupQR(const char* title, const char* apName, const char* url) override;
   void sleep() override;
 
  private:
   static uint16_t nibbleToRgb565(uint8_t nibble);
+  void drawQRCode(const char* text, int x, int y, int size);
 };

@@ -1,6 +1,7 @@
 #include "Gdeb0709e01Panel.h"
 
 #include <TFT_eSPI.h>
+#include <qrcode.h>
 
 // TFT_eSPI_ESP32_S3.h selects CS_L/CS_H with `#if TFT_CS >= 32`. A D-pin name
 // evaluates to 0 there, so CS0 (GPIO44) would never be asserted.
@@ -118,6 +119,68 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
                    "panel may not have executed it");
   }
   Serial.println("drawStatus: done");
+  return true;
+}
+
+void Gdeb0709e01Panel::drawQRCode(const char* text, int x, int y, int size) {
+  QRCode qrcode;
+  uint8_t qrcodeData[qrcode_getBufferSize(6)];
+  qrcode_initText(&qrcode, qrcodeData, 6, 0, text);
+
+  int scale = size / qrcode.size;
+  if (scale < 1) scale = 1;
+  int qrSize = qrcode.size * scale;
+
+  // White background for scannability
+  epaper.fillRect(x, y, qrSize, qrSize, TFT_WHITE);
+
+  for (uint8_t row = 0; row < qrcode.size; row++) {
+    for (uint8_t col = 0; col < qrcode.size; col++) {
+      if (qrcode_getModule(&qrcode, col, row)) {
+        epaper.fillRect(x + col * scale, y + row * scale, scale, scale,
+                        TFT_BLACK);
+      }
+    }
+  }
+}
+
+bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
+                                   const char* url) {
+  // SenseCraft-style setup screen: dark green background, large white text,
+  // QR code for the portal URL. Panel is 1200x1600 portrait.
+  Serial.println("drawSetupQR: fillScreen");
+  epaper.fillScreen(TFT_GREEN);
+
+  epaper.setTextColor(TFT_WHITE);
+  epaper.setTextDatum(MC_DATUM);
+
+  // Title
+  int y = 200;
+  epaper.drawString(title, 600, y, 8);
+  y += 150;
+
+  // QR code (400px) centered, encoding the setup URL
+  int qrSize = 400;
+  int qrX = (1200 - qrSize) / 2;
+  drawQRCode(url, qrX, y, qrSize);
+  y += qrSize + 80;
+
+  // Instructions
+  epaper.drawString("1. Join Wi-Fi network:", 600, y, 6);
+  y += 90;
+  epaper.drawString(apName, 600, y, 7);
+  y += 110;
+  epaper.drawString("2. Scan QR to open setup", 600, y, 6);
+  y += 90;
+  epaper.drawString("3. Enter Wi-Fi details", 600, y, 6);
+
+  epaper.setTextDatum(TL_DATUM);
+  Serial.printf("update start, BUSY=%d\n", digitalRead(4));
+  uint32_t t0 = millis();
+  epaper.update();
+  uint32_t dt = millis() - t0;
+  Serial.printf("update done in %lums, BUSY=%d\n", dt, digitalRead(4));
+  Serial.println("drawSetupQR: done");
   return true;
 }
 
