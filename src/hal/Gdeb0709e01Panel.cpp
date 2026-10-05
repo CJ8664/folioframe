@@ -73,7 +73,9 @@ bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
 
 bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
                                   int numLines) {
+  Serial.println("drawStatus: fillScreen");
   display.fillScreen(0xFFFF);
+  Serial.println("drawStatus: drawString");
   int y = 60;
   display.drawString(title, 60, y, 4);
   y += 80;
@@ -86,8 +88,13 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
   display.update();
   // A real Spectra 6 full refresh holds BUSY low ~27 s. If this returns in
   // ~1 s with BUSY stuck HIGH, the panel never executed the refresh.
-  Serial.printf("update done in %lums, BUSY=%d\n", millis() - t0,
-                digitalRead(4));
+  uint32_t dt = millis() - t0;
+  Serial.printf("update done in %lums, BUSY=%d\n", dt, digitalRead(4));
+  if (dt < 5000 && digitalRead(4)) {
+    Serial.println("WARN: refresh returned fast with BUSY high; "
+                   "panel may not have executed it");
+  }
+  Serial.println("drawStatus: done");
   return true;
 }
 

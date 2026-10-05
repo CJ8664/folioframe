@@ -24,8 +24,8 @@
 #include "hal/Gdeb0709e01Panel.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "3.0.0"
-#define FW_BUILD 3
+#define FW_VERSION "3.1.0"
+#define FW_BUILD 4
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -146,10 +146,20 @@ void setup() {
 
   // --- Network ---
   // No Wi-Fi credentials yet (very first boot): point the user at the
-  // setup AP before WiFiManager starts its captive portal.
-  if (!portal.hasWiFiCreds()) {
+  // setup AP before WiFiManager starts its captive portal. We check our
+  // own server-URL config too: on a fresh boot both are blank, and the
+  // WiFiManager saved-state check alone has proven unreliable.
+  bool hasCreds = portal.hasWiFiCreds();
+  bool hasServer = strlen(config.get().serverUrl) > 0;
+  Serial.printf("netcheck: hasWiFiCreds=%d hasServerUrl=%d\n",
+                (int)hasCreds, (int)hasServer);
+  if (!hasCreds || !hasServer) {
+    Serial.println("netcheck: drawing setup screen");
     status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
                       "http://192.168.4.1");
+    Serial.println("netcheck: setup screen done");
+  } else {
+    Serial.println("netcheck: skipping setup screen");
   }
   if (!portal.ensureWiFi()) panic("Wi-Fi failed", "Check credentials");
   bool clockOk = timeSync.begin(config.get().timezone);
