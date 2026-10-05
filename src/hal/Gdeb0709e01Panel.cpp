@@ -84,15 +84,30 @@ bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
 bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
                                   int numLines) {
   Serial.println("drawStatus: fillScreen");
-  epaper.fillScreen(TFT_WHITE);
+  // SenseCraft-style: dark teal/green background with large white centered text
+  // Panel is 1200x1600 portrait
+  epaper.fillScreen(TFT_GREEN);
   Serial.println("drawStatus: drawString");
-  int y = 60;
-  epaper.drawString(title, 60, y, 4);
-  y += 80;
+
+  // Title: very large, centered (font 8 is the largest built-in)
+  epaper.setTextColor(TFT_WHITE);
+  epaper.setTextDatum(MC_DATUM);  // Middle-Center datum for easy centering
+
+  int y = 300;
+  epaper.drawString(title, 600, y, 8);
+  y += 160;
+
+  // Subtitle lines: large, centered (font 6)
   for (int i = 0; i < numLines; i++) {
-    epaper.drawString(lines[i], 60, y, 2);
-    y += 48;
+    if (lines[i][0] == '\0') {
+      y += 60;  // Extra spacing for blank lines
+      continue;
+    }
+    epaper.drawString(lines[i], 600, y, 6);
+    y += 100;
   }
+
+  epaper.setTextDatum(TL_DATUM);  // Reset to top-left
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();
   epaper.update();
