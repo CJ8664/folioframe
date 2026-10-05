@@ -29,8 +29,33 @@ class String {
   String(long v) : s_(std::to_string(v)) {}
   String(unsigned long v) : s_(std::to_string(v)) {}
   const char* c_str() const { return s_.c_str(); }
+  unsigned int length() const { return (unsigned int)s_.size(); }
+  bool isEmpty() const { return s_.empty(); }
+  bool endsWith(const char* p) const {
+    size_t n = std::strlen(p);
+    return s_.size() >= n && s_.compare(s_.size() - n, n, p) == 0;
+  }
+  void remove(unsigned int i, unsigned int n = (unsigned int)-1) {
+    s_.erase(i, n == (unsigned int)-1 ? std::string::npos : n);
+  }
+  void trim() {
+    size_t a = s_.find_first_not_of(" \t\n\r");
+    if (a == std::string::npos) {
+      s_.clear();
+      return;
+    }
+    s_ = s_.substr(a, s_.find_last_not_of(" \t\n\r") - a + 1);
+  }
   int indexOf(const char* p) const {
     auto i = s_.find(p);
+    return i == std::string::npos ? -1 : (int)i;
+  }
+  int indexOf(char c, unsigned int from = 0) const {
+    auto i = s_.find(c, from);
+    return i == std::string::npos ? -1 : (int)i;
+  }
+  int indexOf(const char* p, unsigned int from) const {
+    auto i = s_.find(p, from);
     return i == std::string::npos ? -1 : (int)i;
   }
   bool startsWith(const char* p) const { return s_.rfind(p, 0) == 0; }
@@ -48,6 +73,8 @@ class String {
   }
   bool operator==(const char* o) const { return s_ == o; }
   bool operator==(const String& o) const { return s_ == o.s_; }
+  bool operator!=(const char* o) const { return s_ != o; }
+  bool operator!=(const String& o) const { return s_ != o.s_; }
   friend String operator+(const String& a, const String& b) {
     return String(a.s_ + b.s_);
   }

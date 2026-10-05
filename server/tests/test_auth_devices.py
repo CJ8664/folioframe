@@ -6,6 +6,7 @@ control without pairing to an explicitly signed-in account.
 import http.client
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -238,6 +239,42 @@ class TestDeviceRegistry(unittest.TestCase):
         self.assertTrue([rl.check("ip") for _ in range(3)])
         self.assertFalse(rl.check("ip"))
         self.assertTrue(rl.check("other-ip"))
+
+    def test_heartbeat_sanitizes_device_controlled_values(self):
+        self._pair()
+        self.reg.heartbeat("sf-aabbccddeeff", {
+            "battery_mv": "<script>alert(1)</script>",
+            "battery_pct": 99999,
+            "rssi": "not-a-number",
+            "fw": "x" * 100,
+        })
+        dev = self.reg._get("sf-aabbccddeeff")
+        # garbage numeric input is dropped, out-of-range clamped, fw cut
+        self.assertNotIn("battery_mv", dev)
+        self.assertEqual(dev["battery_pct"], 100)
+        self.assertNotIn("rssi", dev)
+        self.assertEqual(dev["fw"], "x" * 32)
+
+    def test_register_truncates_device_strings(self):
+        self.reg.register("sf-001122334455", panel="<b>evil</b>" + "y" * 50,
+                          fw="1.0.0<script>")
+        dev = self.reg._get("sf-001122334455")
+        self.assertLessEqual(len(dev["panel"]), 32)
+        self.assertLessEqual(len(dev["fw"]), 32)
+
+    def test_self_unpair_invalidates_pending_claim(self):
+        token = self._pair(user="user-1", device="sf-001122334455")
+        # fresh claim code issued after pairing (e.g. user opened portal)
+        code = self.reg.register("sf-001122334455")["claim_code"]
+        # factory reset from the device itself
+        self.assertTrue(
+            self.reg.device_self_unpair("sf-001122334455"))
+        self.assertIsNone(self.reg.verify_token(token))
+        dev = self.reg._get("sf-001122334455")
+        self.assertIsNone(dev.get("claim_code"))
+        # the pending code no longer works
+        with self.assertRaises(BadClaim):
+            self.reg.poll_claim("sf-001122334455", code)
 
 
 # --------------------------------------------------------------------------
@@ -493,6 +530,84 @@ class TestHTTP(unittest.TestCase):
         devs = json.loads(data)["devices"]
         self.assertEqual(len(devs), 1)
         self.assertEqual(devs[0]["device_id"], "sf-aaaa1111bbbb")
+
+    def _raw_request(self, raw: bytes) -> bytes:
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        s.sendall(raw)
+        resp = b""
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                resp += chunk
+        except socket.timeout:
+            pass
+        s.close()
+        return resp
+
+    def test_csrf_form_garbage_content_length(self):
+        # A garbage Content-Length on the CSRF form fallback must not
+        # crash the handler: expect a clean 403, not a dead connection.
+        cookie, _ = self.login()
+        raw = (f"POST /api/source HTTP/1.1\r\nHost: x\r\n"
+               f"Cookie: {cookie}\r\n"
+               "Content-Type: application/x-www-form-urlencoded\r\n"
+               "Content-Length: garbage\r\n"
+               "Connection: close\r\n\r\n").encode()
+        resp = self._raw_request(raw)
+        self.assertIn(b"403", resp.split(b"\r\n")[0])
+
+    def test_csrf_form_oversized_body_ignored(self):
+        # A huge form body on the CSRF fallback is ignored (not read into
+        # memory): still a clean 403 for the missing token.
+        cookie, _ = self.login()
+        body = b"csrf=" + b"x" * 200000
+        raw = (f"POST /api/source HTTP/1.1\r\nHost: x\r\n"
+               f"Cookie: {cookie}\r\n"
+               "Content-Type: application/x-www-form-urlencoded\r\n"
+               f"Content-Length: {len(body)}\r\n"
+               "Connection: close\r\n\r\n").encode() + body
+        resp = self._raw_request(raw)
+        self.assertIn(b"403", resp.split(b"\r\n")[0])
+
+    def test_ota_version_is_firmware_manifest(self):        # The firmware's OtaManifest parser needs "build=N" lines; a bare
+        # number would be rejected and OTA would silently never happen.
+        cookie, csrf = self.login()
+        h = {"Content-Type": "application/json", "Cookie": cookie,
+             "X-CSRF-Token": csrf}
+        status, _, data = self.req(
+            "POST", "/v1/device/register",
+            body=json.dumps({"device_id": "sf-0a0000000001",
+                             "panel": "gdeb0709e01", "fw": "2.0.0"}),
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 201)
+        code = json.loads(data)["claim_code"]
+        self.req("POST", "/api/devices/claim",
+                 body=json.dumps({"code": code}), headers=h)
+        status, _, data = self.req(
+            "POST", "/v1/device/claim",
+            body=json.dumps({"device_id": "sf-0a0000000001",
+                             "claim_code": code}),
+            headers={"Content-Type": "application/json"})
+        token = json.loads(data)["device_token"]
+        # unauthenticated -> 401
+        status, _, _ = self.req("GET", "/v1/device/ota/version")
+        self.assertEqual(status, 401)
+        # authenticated -> manifest with a numeric build line
+        status, _, data = self.req(
+            "GET", "/v1/device/ota/version",
+            headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(status, 200)
+        body = data.decode()
+        self.assertTrue(body.startswith("build="), body)
+        self.assertTrue(body.split("=", 1)[1].split("\n")[0].strip().isdigit())
+        # md5 line is optional (only when a firmware binary is published),
+        # but when present it must be 32 hex chars or the firmware rejects it.
+        for line in body.splitlines():
+            if line.startswith("md5="):
+                md5 = line.split("=", 1)[1].strip()
+                self.assertRegex(md5, r"^[0-9a-f]{32}$")
 
     def test_second_user_cannot_claim_paired_device(self):
         cookie, csrf = self.login()

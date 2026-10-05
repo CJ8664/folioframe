@@ -1,16 +1,19 @@
 #pragma once
 // Captive-portal Wi-Fi provisioning (WiFiManager) + single-page settings
-// portal + /debug JSON. Run when: no Wi-Fi credentials, or user holds BTN1.
+// portal + /debug JSON + /unpair. Run when: no Wi-Fi credentials, no server
+// URL configured, or user holds BTN1.
 #include <Arduino.h>
 #include <WebServer.h>
 #include <WiFiManager.h>
 
 #include "../hal/Board.h"
 #include "Config.h"
+#include "DeviceClient.h"
 
 class Portal {
  public:
-  Portal(Board* board, Config* config) : board_(board), config_(config) {}
+  Portal(Board* board, Config* config, DeviceClient* client)
+      : board_(board), config_(config), client_(client) {}
 
   // Ensure Wi-Fi is connected (blocking, with portal fallback).
   bool ensureWiFi();
@@ -25,12 +28,14 @@ class Portal {
  private:
   Board* board_;
   Config* config_;
+  DeviceClient* client_;  // for /unpair; may be used before begin()
   WiFiManager wm_;
   WebServer server_{80};
   bool dirty_ = false;
 
   String settingsPage();
   void handleSave();
+  void handleUnpair();
   void handleDebug();
   static int parseTimeToMin(const String& hhmm);
 };

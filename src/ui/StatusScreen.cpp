@@ -10,6 +10,20 @@ void StatusScreen::showPortal(const char* apName, const char* url) {
   panel_->drawStatus("SpectraFrame setup", lines, 6);
 }
 
+void StatusScreen::showPairing(const char* claimCode, const char* where) {
+  const char* lines[] = {
+      "1. Open your SpectraFrame", "   console in a browser",
+      "2. Go to 'Pair a frame'",  "3. Enter this code:",
+      claimCode, "", where,
+  };
+  panel_->drawStatus("Pair this frame", lines, 7);
+}
+
+void StatusScreen::showPaired() {
+  const char* lines[] = {"Paired!", "", "Fetching first image..."};
+  panel_->drawStatus("SpectraFrame", lines, 3);
+}
+
 void StatusScreen::showError(const char* title, const char* detail) {
   const char* lines[] = {detail, "", "Will retry on next wake."};
   panel_->drawStatus(title, lines, 3);

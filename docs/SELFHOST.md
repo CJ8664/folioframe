@@ -97,8 +97,25 @@ Keep `server/config.json` backed up too — it holds your OAuth client secret.
 
 ## Notes
 
-- The device needs to reach the service too: point its server URL at the
-  same public HTTPS host. (The firmware side of pairing is Phase 2.)
+- The device needs to reach the service too: set its server URL (in the
+  Wi-Fi portal at `http://192.168.4.1` on first boot, or later via the
+  portal) to the same public HTTPS host. First boot shows a claim code on
+  the e-ink screen — enter it at `<your-url>/claim` in the console.
 - Logs: `docker compose logs -f spectraframe`.
 - Resource use is tiny: the container idles near zero and wakes to render
   frames on the rotation interval.
+
+## Publishing firmware updates (OTA)
+
+1. Build the firmware in PlatformIO (`pio run`). The binary is at
+   `.pio/build/ee02/firmware.bin`.
+2. Copy it to `server/firmware/firmware.bin` in this repo and rebuild /
+   redeploy the container (it's baked into the image).
+3. Bump `"build"` in your config to the firmware's `FW_BUILD` number
+   (see `src/main.cpp`) and redeploy.
+
+Devices check `GET /v1/device/ota/version` on every wake. When the
+server's build number is higher than theirs, they download
+`firmware.bin`, verify its MD5 against the manifest, and flash it —
+never on a low battery. No binary published → the version endpoint just
+reports the build number and nothing happens.

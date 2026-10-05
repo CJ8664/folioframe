@@ -1,88 +1,95 @@
 # SpectraFrame
 
-Modular e-paper frame firmware combining the device-side feature superset of
-7 community projects (guysie, philippwaller, tesserae, aitjcize, sven97,
-josomm22, matthewfcarlson, michaelkurath). First target: **Seeed XIAO EE02 +
-Good Display GDEB0709E01 7.09" Spectra 6**.
+An open-source e-paper photo frame: ESP32-S3 firmware plus a self-hosted
+companion server. First hardware target: **Seeed XIAO EE02 + Good Display
+GDEB0709E01 7.09" Spectra 6** (6-color e-ink).
 
-Wake → Wi-Fi → time → OTA → fetch → paint → deep sleep.
+The frame wakes up, fetches a dithered photo from your server, paints it,
+and goes back to deep sleep. That's the whole loop:
+
+```
+Wake → Wi-Fi → time → pair (first boot) → OTA → fetch → paint → deep sleep
+```
+
+## How it works
+
+- **You run the server** — on a home server, a VPS, anywhere with Python.
+  It renders photos into the panel's native format and serves them.
+- **The frame pairs with a claim code** — first boot shows `XXXX-XXXX` on
+  the e-ink screen; you type it into the web console once. From then on the
+  frame authenticates with its own Bearer token. No accounts or passwords
+  on the device, ever.
+- **Photos come from sources you pick** — Google Photos (via Google's
+  Picker API), a local folder, picsum, a URL template, or a clock/weather
+  dashboard. You can also push a photo from your phone to pin it immediately.
+
+The HTTP contract is versioned and documented in [PROTOCOL.md](PROTOCOL.md) —
+any server can feed the frame, and any frame can talk to the server.
 
 ## Quick start
 
-1. Install [PlatformIO](https://platformio.org/).
-2. Open this folder. Select env `ee02`.
-3. **Enable PSRAM** (required — the 960 KB frame buffer lives in PSRAM).
-4. `pio run -t upload`, then `pio device monitor`.
-5. First boot: join Wi-Fi `SF-Setup-SF-XXXXXX`, complete the portal.
-6. Serve frames: `python3 server/spectra_server.py`, open `/login`, sign in
-   with Google, and pair the device with the claim code on its screen.
-
-## Layout
-
-| Dir | Role | Swap rule |
-|---|---|---|
-| `src/hal/` | `Board` / `Panel` abstract interfaces + EE02 / GDEB0709E01 | New hardware = new subclass, nothing else changes |
-| `src/core/` | Scheduler, QuietHours, BatteryCurve, UrlTemplate, OtaManifest, Validate | Pure C++17, no Arduino — natively unit-tested |
-| `src/app/` | Config, TimeSync, FrameFetcher, OtaManager, Portal, PowerManager | Arduino behaviors composed from `hal` + `core` |
-| `src/ui/` | StatusScreen | On-panel text screens via the `Panel` seam |
-
-## Server protocol
-
-Any server can feed the frame — see [PROTOCOL.md](PROTOCOL.md) (v2). Every
-device route requires a per-device Bearer token obtained through the
-claim-code pairing flow; every human route requires a Google sign-in session.
-There is no anonymous access to frames, photos, or device controls.
-
-## Companion server
-
-`server/` is a working PROTOCOL.md server (Python + Pillow), MIT-licensed,
-fully self-hostable:
+### 1. Run the server
 
 ```bash
-pip install -r server/requirements.txt   # core only: Pillow + google-auth
+pip install -r server/requirements.txt   # Pillow + google-auth
 python3 server/spectra_server.py         # :8765, writes server/config.json
 ```
 
-Open `/login`, sign in with Google, pair a device with the claim code from
-its screen (`/claim`). Upload a photo from your phone to force-push it to a
-device; connect Google Photos (Picker API) for automatic rotation —
-see `docs/GOOGLE_PHOTOS.md`.
+Open `http://localhost:8765`, sign in with Google, and you're in the
+console. For Google sign-in and Google Photos you configure **one** Google
+OAuth client, once, as the admin — users never touch the Cloud Console.
+See [docs/SELFHOST.md](docs/SELFHOST.md) and
+[docs/GOOGLE_PHOTOS.md](docs/GOOGLE_PHOTOS.md).
 
-Sources: `folder` (local albums), `picsum`, `url` (templates), `dashboard`
-(clock + Open-Meteo weather), `google_photos`. Rotation engine with
-unseen-first history, quiet hours, and ETag/304. Tests:
-`server/tests/run.sh` (73 cases).
+### 2. Flash the frame
 
-### Self-hosting
+1. Install [PlatformIO](https://platformio.org/), open this folder, env `ee02`.
+2. **Enable PSRAM** (required — the 960 KB frame buffer lives there).
+3. `pio run -t upload`, then `pio device monitor`.
+4. First boot: join the `SF-Setup-…` Wi-Fi network, open `http://192.168.4.1`,
+   enter your Wi-Fi details **and your server URL**
+   (e.g. `https://frame.example.com`).
+5. The screen shows a claim code — enter it at `<server>/claim` in the
+   console. Done. The frame fetches its first photo and sleeps.
 
-The default configuration has **zero cloud dependencies**: the registry is
-a local JSON file, photo blobs live on local disk, and the admin configures
-one Google OAuth client once (`google.client_id` / `google.client_secret` in
-`SPECTRA_CONFIG_JSON`) — users then just click the normal Sign in with Google
-button. Run it on any machine with Python 3.12+, or `docker build` the
-included `Dockerfile`. Firebase (Firestore, Cloud Storage, Cloud Run)
-is strictly opt-in via `firebase.project_id` — see `docs/FIREBASE.md`.
-Without it, no Firebase package is even imported.
+## Layout
+
+| Dir | What's inside | Swap rule |
+|---|---|---|
+| `src/hal/` | `Board` / `Panel` interfaces + EE02 / GDEB0709E01 drivers | New hardware = new subclass, nothing else changes |
+| `src/core/` | Scheduler, QuietHours, BatteryCurve, UrlTemplate, OtaManifest, Validate, JsonLite | Pure C++17, no Arduino — natively unit-tested |
+| `src/app/` | Config, TimeSync, DeviceClient, FrameFetcher, OtaManager, Portal, PowerManager | Arduino behaviors built from `hal` + `core` |
+| `src/ui/` | StatusScreen | On-panel text screens through the `Panel` seam |
+| `server/` | The companion server (Python + Pillow) | Implements PROTOCOL.md |
+
+## Security
+
+Short version: no anonymous access to anything. Devices authenticate with a
+per-device 256-bit Bearer token from the claim-code pairing flow; humans
+with a Google sign-in session (ID token cryptographically verified);
+state-changing web routes need a CSRF token; uploads are size-capped;
+Google Photos tokens are per-user and isolated. The full model, including
+the known tradeoffs (device skips TLS cert validation — see the honest
+notes), is in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Verification
 
-- **Level 1** — native unit tests: `tools/run_tests.sh` (24 cases, all `core/`)
-- **Level 2** — full `src/` syntax check vs Arduino stubs: `tools/stub_compile.sh`
-- **Level 3** — on-device: [docs/HARDWARE_CHECKLIST.md](docs/HARDWARE_CHECKLIST.md)
+- **Firmware unit tests** — `tools/run_tests.sh` (pure `core/`, runs on your
+  machine, no hardware)
+- **Firmware syntax check** — `tools/stub_compile.sh` (compiles all of
+  `src/` against Arduino API stubs)
+- **Server tests** — `server/tests/run.sh` (92 cases, incl. HTTP integration)
+- **On-device** — [docs/HARDWARE_CHECKLIST.md](docs/HARDWARE_CHECKLIST.md)
 
-## Language choice
+## Docs
 
-C++17 on Arduino: native speed for 960 KB frame ops, `setup()`/`loop()`
-readability, and the libraries this needs (WiFiManager, ESP32 `Update`,
-`Preferences`, official Seeed_GFX2 with 7.09" support). MicroPython was
-rejected (too slow for e-paper frame ops), Rust (no GDEB0709E01 driver
-ecosystem), ESP-IDF C (3–5× boilerplate for the same result), ESPHome YAML
-(not code — custom logic still needs C++). Full analysis in [PLAN.md](PLAN.md).
-
-## Roadmap (v2)
-
-On-device JPEG decode (`Panel::drawJpeg` hook), BLE provisioning
-(`app/Provisioner` seam), touch input, MQTT / native Home Assistant API.
+- [PROTOCOL.md](PROTOCOL.md) — the versioned device↔server contract
+- [docs/SECURITY.md](docs/SECURITY.md) — threat model and hardening notes
+- [docs/SELFHOST.md](docs/SELFHOST.md) — deploying the server (Docker,
+  Firebase/Cloud Run is opt-in)
+- [docs/GOOGLE_PHOTOS.md](docs/GOOGLE_PHOTOS.md) — the one-time Google setup
+- [docs/HARDWARE_CHECKLIST.md](docs/HARDWARE_CHECKLIST.md) — bringing up the
+  EE02 + panel hardware
 
 ## License
 

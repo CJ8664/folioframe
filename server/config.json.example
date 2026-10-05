@@ -24,6 +24,7 @@
   },
   "port": 8765,
   "public_url": "https://frame.example.com",
+  "build": "1",
   "quiet_end": "07:00",
   "quiet_start": "22:00",
   "rotation_minutes": 60,

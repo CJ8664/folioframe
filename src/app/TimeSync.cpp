@@ -11,9 +11,15 @@ bool TimeSync::begin(const char* tzSetting) {
       setenv("TZ", "UTC0", 1);
       offsetMin_ = 0;
     } else {
-      // POSIX sign is inverted: UTC-8 -> "UTC8".
+      // POSIX sign is inverted: UTC-8 -> "UTC8". Keep the minutes for
+      // half-hour zones (e.g. UTC+5:30 -> "UTC-5:30").
       char buf[16];
-      snprintf(buf, sizeof(buf), "UTC%ld", -(long)(offsetMin_ / 60));
+      int hrs = offsetMin_ / 60;
+      int mins = abs(offsetMin_ % 60);
+      if (mins == 0)
+        snprintf(buf, sizeof(buf), "UTC%ld", -(long)hrs);
+      else
+        snprintf(buf, sizeof(buf), "UTC%ld:%02d", -(long)hrs, mins);
       setenv("TZ", buf, 1);
     }
   } else {
@@ -33,6 +39,10 @@ bool TimeSync::begin(const char* tzSetting) {
 }
 
 bool TimeSync::fetchIpApiOffset() {
+  // Plain HTTP by necessity: ip-api.com's free tier has no HTTPS. The
+  // response only sets the quiet-hours UTC offset (fail-safe: falls back
+  // to UTC), never anything security-sensitive. A MITM can at worst shift
+  // the sleep schedule.
   HTTPClient http;
   http.setTimeout(8000);
   if (!http.begin("http://ip-api.com/json/?fields=status,offset")) return false;

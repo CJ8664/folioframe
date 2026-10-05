@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 CORE="src/core/QuietHours.cpp src/core/Scheduler.cpp src/core/BatteryCurve.cpp \
-      src/core/UrlTemplate.cpp src/core/OtaManifest.cpp src/core/Validate.cpp"
+      src/core/UrlTemplate.cpp src/core/OtaManifest.cpp src/core/Validate.cpp src/core/JsonLite.cpp"
 mkdir -p build/tests
 pass=0
 fail=0

@@ -11,3 +11,5 @@ server/data/
 server/.session_secret
 server/data/
 server/.gphotos_token.json
+
+server/config.json

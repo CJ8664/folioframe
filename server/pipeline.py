@@ -8,6 +8,12 @@ from io import BytesIO
 
 from PIL import Image, ImageOps
 
+# Hard cap on decoded pixel count: a 25 MB upload can hide gigapixels of
+# decompressed data. 50 MP is far above anything this pipeline needs
+# (the frame itself is 1200x1600 = 1.9 MP); beyond it Pillow raises
+# DecompressionBombError instead of just warning.
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
 # Hardware nibble -> measured-ish sRGB (muted toward real e-ink output,
 # the aitjcize measured-palette lesson: dither against perceived colors).
 PALETTE = [

@@ -40,6 +40,27 @@ def hash_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _sanitize_heartbeat(info):
+    """Clamp device-reported telemetry to sane types/ranges.
+
+    info comes from the device (POST /v1/device/status), so every value
+    is untrusted. Returns a dict of clean values; garbage fields are
+    dropped individually without affecting the others.
+    """
+    out = {}
+    for key, lo, hi in (("battery_mv", 0, 6000), ("battery_pct", 0, 100),
+                        ("rssi", -120, 0)):
+        if info.get(key) is None:
+            continue
+        try:
+            out[key] = max(lo, min(hi, int(info[key])))
+        except (TypeError, ValueError):
+            continue
+    if info.get("fw") is not None:
+        out["fw"] = str(info["fw"])[:32]
+    return out
+
+
 class RateLimiter:
     """In-memory sliding-window limiter keyed by client IP."""
 
@@ -89,7 +110,9 @@ class DeviceRegistry:
             "device_id": device_id, "owner": None, "token_hash": None,
             "name": device_id,
         }
-        dev.update({"panel": panel, "fw": fw,
+        # panel/fw come from the device: keep them short plain strings so
+        # a rogue device can't stash markup that renders in the console.
+        dev.update({"panel": str(panel or "")[:32], "fw": str(fw or "")[:32],
                     "last_register": int(time.time())})
         dev["claim_code"] = self._new_code()
         dev["claim_expires"] = int(time.time()) + CLAIM_TTL
@@ -181,6 +204,10 @@ class DeviceRegistry:
         dev["owner"] = None
         dev["token_hash"] = None
         dev.pop("pending_token", None)
+        # Also invalidate any pending claim code so a stale code shown on
+        # the screen can't be claimed after the reset.
+        dev["claim_code"] = None
+        dev["claim_used"] = True
         self._put(dev)
         return True
 
@@ -197,9 +224,11 @@ class DeviceRegistry:
         if not dev:
             return False
         dev["last_seen"] = int(time.time())
-        for k in ("battery_mv", "battery_pct", "rssi", "fw"):
-            if info.get(k) is not None:
-                dev[k] = info[k]
+        # These values come from the device, so clamp them to sane
+        # types/ranges at ingestion: a rogue device must not be able to
+        # store HTML/JS blobs that later render in the web console.
+        # Each field is independent: garbage in one never drops the others.
+        dev.update(_sanitize_heartbeat(info))
         self._put(dev)
         return True
 

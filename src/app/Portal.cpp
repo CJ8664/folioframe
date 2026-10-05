@@ -31,9 +31,12 @@ String Portal::settingsPage() {
   }
   String h = "<html><body><h2>SpectraFrame settings</h2>"
              "<form method='POST' action='/save'>"
-             "Image URL<br><input name='url' size='60' value='" +
-             String(s.imageUrl) +
-             "'><br><br>Refresh interval<br><select name='interval'>" +
+             "Server URL<br><input name='srv' size='60' value='" +
+             String(s.serverUrl) +
+             "' placeholder='https://frame.example.com'><br>"
+             "<small>Your SpectraFrame server. The frame pairs with it and "
+             "fetches images from it.</small><br><br>"
+             "Refresh interval<br><select name='interval'>" +
              intervalOpts +
              "</select><br><br>"
              "<input type='checkbox' name='qen' value='1'" +
@@ -51,26 +54,42 @@ String Portal::settingsPage() {
              "Orientation (0-3)<br><input name='orient' size='3' value='" +
              String(s.orientation) +
              "'><br><br>"
-             "OTA base URL (empty = disabled)<br><input name='otabase' size='40' value='" +
+             "OTA base URL (empty = use server)<br><input name='otabase' size='40' value='" +
              String(s.otaBase) +
              "'><br><br>"
              "<input type='submit' value='Save'></form>"
-             "<p><a href='/debug'>debug JSON</a></p></body></html>";
+             "<p><a href='/debug'>debug JSON</a></p>"
+             "<p><form method='POST' action='/unpair' "
+             "onsubmit=\"return confirm('Unpair this frame? It will need to "
+             "be paired again.')\">"
+             "<input type='submit' value='Unpair frame'></form></p>"
+             "</body></html>";
   return h;
 }
 
 void Portal::handleSave() {
   Settings s = config_->get();  // start from current
-  strncpy(s.imageUrl, server_.arg("url").c_str(), sizeof(s.imageUrl) - 1);
+  String newSrv = server_.arg("srv");
+  newSrv.trim();
+  strncpy(s.serverUrl, newSrv.c_str(), sizeof(s.serverUrl) - 1);
+  s.serverUrl[sizeof(s.serverUrl) - 1] = '\0';
+  // Changing servers invalidates the pairing token: it belongs to the old
+  // server. Force a re-pair rather than failing every fetch with 401s.
+  if (String(config_->get().serverUrl) != String(s.serverUrl)) {
+    config_->clearDeviceToken();
+  }
   s.intervalMinutes = server_.arg("interval").toInt();
   s.quietEnabled = server_.hasArg("qen");
   s.quietStartMin = parseTimeToMin(server_.arg("qs"));
   s.quietEndMin = parseTimeToMin(server_.arg("qe"));
   strncpy(s.timezone, server_.arg("tz").c_str(), sizeof(s.timezone) - 1);
+  s.timezone[sizeof(s.timezone) - 1] = '\0';
   strncpy(s.deviceName, server_.arg("name").c_str(),
           sizeof(s.deviceName) - 1);
+  s.deviceName[sizeof(s.deviceName) - 1] = '\0';
   s.orientation = (uint8_t)server_.arg("orient").toInt();
   strncpy(s.otaBase, server_.arg("otabase").c_str(), sizeof(s.otaBase) - 1);
+  s.otaBase[sizeof(s.otaBase) - 1] = '\0';
   String err;
   if (!Config::validate(s, err)) {
     server_.send(400, "text/plain", "Invalid: " + err);
@@ -81,6 +100,19 @@ void Portal::handleSave() {
   dirty_ = true;
   server_.send(200, "text/html",
                "<html><body><p>Saved.</p><p><a href='/'>back</a></p></body></html>");
+}
+
+void Portal::handleUnpair() {
+  String token = config_->deviceToken();
+  bool ok = true;
+  if (token.length() && client_) ok = client_->unpair(token.c_str());
+  config_->clearDeviceToken();
+  dirty_ = true;  // caller re-boots into pairing mode
+  server_.send(200, "text/html",
+               ok ? "<html><body><p>Unpaired. The frame will show a new "
+                    "pairing code on next wake.</p></body></html>"
+                  : "<html><body><p>Server unreachable, but the local token "
+                    "was cleared. Re-pair on next wake.</p></body></html>");
 }
 
 void Portal::handleDebug() {
@@ -102,6 +134,7 @@ bool Portal::run(uint32_t timeoutMs) {
   dirty_ = false;
   server_.on("/", [this]() { server_.send(200, "text/html", settingsPage()); });
   server_.on("/save", HTTP_POST, [this]() { handleSave(); });
+  server_.on("/unpair", HTTP_POST, [this]() { handleUnpair(); });
   mountDebug(server_);
   server_.begin();
   uint32_t start = millis();

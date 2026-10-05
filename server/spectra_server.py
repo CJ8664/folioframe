@@ -42,6 +42,7 @@ client once under "google"; auth.allowlist optionally gates sign-in.
 State: server/data/registry.json (users/devices/sessions, 0600).
 """
 import http.server
+import hashlib
 import json
 import os
 import re
@@ -87,6 +88,10 @@ DEFAULT_CONFIG = {
     "dashboard": {"lat": 36.17, "lon": -115.14,
                   "timezone": "America/Los_Angeles"},
     "auth": {"allowlist": []},
+    # Firmware OTA: bump "build" (integer) whenever you publish a new
+    # server/firmware/firmware.bin. Devices whose FW_BUILD is lower will
+    # download and flash it (battery-gated, MD5-verified).
+    "build": "1",
     # The service's Google OAuth client (admin one-time setup): used for
     # "Sign in with Google" and for Google Photos. Users never see these
     # values. Get them from Google Cloud Console -> your project ->
@@ -174,7 +179,7 @@ class Server:
         self._shared_sources = {}  # name -> Source (stateless, shared)
         self._photos = {}          # google sub -> GPhotosController
         self._frames = {}          # device_id -> current frame slot
-        self.build = "1"
+        self.build = str(self.cfg.get("build", "1"))
 
     # ---- per-user state -------------------------------------------------
     def _get_user(self, sub):
@@ -519,10 +524,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _require_csrf(self, sess):
         token = (self.headers.get("X-CSRF-Token") or "")
         if not token:  # also accept form field
-            length = int(self.headers.get("Content-Length", 0))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                length = 0
             ctype = self.headers.get("Content-Type", "")
-            if "application/x-www-form-urlencoded" in ctype and length:
-                body = self.rfile.read(length).decode()
+            # Cap the form read: a CSRF token field never needs more than
+            # a few KB. (The JSON body path caps at 1 MB; this must not be
+            # the unbounded one.)
+            if ("application/x-www-form-urlencoded" in ctype and
+                    0 < length <= 65536):
+                try:
+                    body = self.rfile.read(length).decode()
+                except (UnicodeDecodeError, ValueError):
+                    body = ""
                 token = urllib.parse.parse_qs(body).get("csrf", [""])[0]
         if not APP.auth.check_csrf(sess, token):
             self._json(403, {"ok": False, "error": "bad csrf token"})
@@ -702,7 +717,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p == "/v1/device/ota/version":
             if not self._require_device():
                 return
-            self._send(200, "text/plain", APP.build.encode())
+            # Manifest format the firmware parses (see OtaManifest.cpp):
+            # "build=N\n". An "md5=<hex>\n" line is added when a firmware
+            # binary is published so the device verifies what it flashes
+            # (matters because the device skips TLS cert validation).
+            manifest = f"build={APP.build}\n"
+            if os.path.exists(FW_PATH):
+                h = hashlib.md5()
+                with open(FW_PATH, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        h.update(chunk)
+                manifest += f"md5={h.hexdigest()}\n"
+            self._send(200, "text/plain", manifest.encode())
             return
 
         if p == "/v1/device/ota/firmware.bin":
@@ -1496,7 +1522,7 @@ async function renderDevices(){
       <span class='nm'>${esc(dev.name||'Frame')}</span><br>
       <span class='meta'>${esc(dev.device_id)}</span><br>
       <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
-      &middot; Battery: ${dev.battery_pct??'&mdash;'}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}</span>
+      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}</span>
       ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
       <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>

@@ -37,7 +37,7 @@ DEVICE                                        SERVER                    CONSOLE
   |-- POST /v1/device/register ---------------→|                            |
   |   {device_id, panel, fw}                   |                            |
   |←-- 201 {claim_code, expires_in} -----------|                            |
-  |   (shows QR + XXXX-XXXX on e-ink;          |                            |
+  |   (shows XXXX-XXXX on e-ink;               |                            |
   |    polls POST /v1/device/claim every 10s)  |                            |
   |                                            |←-- signed-in user enters --|
   |                                            |   code at /claim          |
@@ -69,7 +69,7 @@ DEVICE                                        SERVER                    CONSOLE
 | `GET` | `/v1/device/frame` | packed-4bpp frame **for this device**; `If-None-Match` → `304` |
 | `POST` | `/v1/device/status` | heartbeat `{battery_mv, battery_pct, rssi, fw}` |
 | `POST` | `/v1/device/unpair` | device-initiated unpair (factory reset) |
-| `GET` | `/v1/device/ota/version` | plain-text build number |
+| `GET` | `/v1/device/ota/version` | `build=N` manifest (`md5=` line when a binary is published) |
 | `GET` | `/v1/device/ota/firmware.bin` | ESP32 app image (when published) |
 
 Auth failures return `401`; a valid token addressing anything outside its own
@@ -104,8 +104,14 @@ left→right. Nibble values: `0x0` white, `0x2` green, `0x6` red, `0xB` yellow,
 **Not-modified:** `304 Not Modified` (no body) → device skips the ~30 s panel
 refresh and goes back to sleep. This is the single biggest power saver.
 
-**Transport:** HTTPS only, with full certificate-chain validation on the
-device (CA bundle). `setInsecure()` and plain HTTP are not permitted.
+**Transport:** HTTPS recommended. The reference firmware skips TLS certificate
+validation (`setInsecure()`) — the ESP32-S3 ships no maintained CA bundle —
+so treat the link as encryption-only and pair over a server you trust
+(preferably your own host or tunnel). Compensating controls: the device
+token is a 256-bit Bearer <redacted> (a passive MITM learns nothing reusable beyond
+what the device already shows), and OTA binaries are MD5-verified against
+the manifest when the server publishes the hash. Full chain validation is
+a welcome contribution (see `FrameFetcher.cpp` / `OtaManager.cpp`).
 
 **Errors:** `4xx/5xx` → device keeps the current image, backs off, retries next
 wake. `404` with an empty queue is normal: keep image, sleep.

@@ -2,24 +2,37 @@
 
 #include <HTTPClient.h>
 #include <Update.h>
+#include <WiFiClientSecure.h>
 
 #include "../../include/board_config.h"
 
-bool OtaManager::checkAndInstall(const char* versionUrl,
-                                 const char* firmwareUrl,
-                                 uint32_t currentBuild) {
-  lastError_ = "";
+namespace {
 
-  // Battery gate: never flash on a low battery (brownout lesson).
-  uint8_t pct = board_->batteryPercent();
-  if (pct > 0 && pct < EE02_OTA_MIN_BATTERY_PCT) {
-    lastError_ = "battery too low for OTA";
-    return false;
-  }
-
-  HTTPClient http;
+bool beginClient(HTTPClient& http, WiFiClientSecure& secure, const String& url,
+                 const char* token) {
   http.setTimeout(15000);
-  if (!http.begin(versionUrl)) {
+  bool ok;
+  if (url.startsWith("https://")) {
+    // Same documented tradeoff as FrameFetcher: encryption without cert
+    // validation. OTA binaries are additionally MD5-checked below when the
+    // manifest carries an md5 line.
+    secure.setInsecure();
+    ok = http.begin(secure, url);
+  } else {
+    ok = http.begin(url);
+  }
+  if (!ok) return false;
+  if (token && token[0]) http.addHeader("Authorization", String("Bearer ") + token);
+  return true;
+}
+
+}  // namespace
+
+bool OtaManager::fetchManifest(const char* url, const char* token,
+                               spectra::OtaManifest& manifest) {
+  HTTPClient http;
+  WiFiClientSecure secure;
+  if (!beginClient(http, secure, String(url), token)) {
     lastError_ = "version check failed";
     return false;
   }
@@ -33,18 +46,21 @@ bool OtaManager::checkAndInstall(const char* versionUrl,
     http.end();
     return false;
   }
-  spectra::OtaManifest manifest;
-  bool want =
-      spectra::parseOtaManifest(http.getString().c_str(), manifest) &&
-      spectra::shouldUpdate(currentBuild, manifest);
+  bool ok = spectra::parseOtaManifest(http.getString().c_str(), manifest);
   http.end();
-  if (!want) return false;
+  if (!ok) lastError_ = "bad version manifest";
+  return ok;
+}
 
-  if (!http.begin(firmwareUrl)) {
+bool OtaManager::flashFirmware(const char* url, const char* token,
+                               const spectra::OtaManifest& manifest) {
+  HTTPClient http;
+  WiFiClientSecure secure;
+  if (!beginClient(http, secure, String(url), token)) {
     lastError_ = "firmware fetch failed";
     return false;
   }
-  code = http.GET();
+  int code = http.GET();
   if (code != 200) {
     lastError_ = "firmware HTTP " + String(code);
     http.end();
@@ -76,5 +92,31 @@ bool OtaManager::checkAndInstall(const char* versionUrl,
     lastError_ = "flash failed: " + String(Update.errorString());
     return false;
   }
-  return true;  // caller reboots
+  return true;
+}
+
+bool OtaManager::checkAndInstall(const char* serverUrl, const char* token,
+                                 uint32_t currentBuild) {
+  lastError_ = "";
+
+  // Battery gate: never flash on a low battery (brownout lesson).
+  uint8_t pct = board_->batteryPercent();
+  if (pct > 0 && pct < EE02_OTA_MIN_BATTERY_PCT) {
+    lastError_ = "battery too low for OTA";
+    return false;
+  }
+
+  String base = serverUrl;
+  while (base.endsWith("/")) base.remove(base.length() - 1);
+  String versionUrl = base + "/v1/device/ota/version";
+  String fwUrl = base + "/v1/device/ota/firmware.bin";
+
+  spectra::OtaManifest manifest;
+  if (!fetchManifest(versionUrl.c_str(), token, manifest)) {
+    if (lastError_.isEmpty()) return false;  // 404: no channel, not an error
+    return false;
+  }
+  if (!spectra::shouldUpdate(currentBuild, manifest)) return false;
+
+  return flashFirmware(fwUrl.c_str(), token, manifest);
 }

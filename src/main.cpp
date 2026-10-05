@@ -1,24 +1,30 @@
-// SpectraFrame v1 — EE02 + GDEB0709E01 7.09" Spectra 6.
+// SpectraFrame v2 — EE02 + GDEB0709E01 7.09" Spectra 6.
 //
-// Wake → Wi-Fi → time → OTA → fetch → paint → deep sleep.
-// Buttons: BTN1 portal, BTN2 fetch now, BTN3 pin/freeze toggle.
+// Wake → Wi-Fi → time → pair (first boot) → OTA → fetch → paint → sleep.
+// The frame never fetches images directly: it pairs with the SpectraFrame
+// server (claim code shown on the e-paper screen, typed into the web
+// console), then polls GET /v1/device/frame with its device Bearer token.
+// The server renders whatever source the user picked (Google Photos,
+// local album, ...) into packed 4bpp for this panel.
+//
+// Buttons: BTN1 portal/settings, BTN2 fetch now, BTN3 pin/freeze toggle.
 #include <Arduino.h>
 #include <esp_sleep.h>
 
 #include "../include/board_config.h"
 #include "app/Config.h"
+#include "app/DeviceClient.h"
 #include "app/FrameFetcher.h"
 #include "app/OtaManager.h"
 #include "app/Portal.h"
 #include "app/PowerManager.h"
 #include "app/TimeSync.h"
-#include "core/UrlTemplate.h"
 #include "hal/EE02Board.h"
 #include "hal/Gdeb0709e01Panel.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "1.0.0"
-#define FW_BUILD 1
+#define FW_VERSION "2.0.0"
+#define FW_BUILD 2
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -28,9 +34,10 @@ static EE02Board board;
 static Gdeb0709e01Panel panel;
 static Config config;
 static TimeSync timeSync;
+static DeviceClient deviceClient(&board);
 static FrameFetcher fetcher(&board, &panel);
 static OtaManager ota(&board);
-static Portal portal(&board, &config);
+static Portal portal(&board, &config, &deviceClient);
 static PowerManager power(&board);
 static StatusScreen status(&panel);
 
@@ -46,6 +53,42 @@ static void panic(const char* title, const char* detail) {
   status.showError(title, detail);
   panel.sleep();
   board.deepSleep((uint64_t)15 * 60 * 1000000ULL);  // retry in 15 min
+}
+
+// Pairing: register with the server, show the claim code on the panel,
+// poll until the human claims us in the web console. Blocks (with the
+// panel showing the code) until claimed or the code expires.
+static String pairWithServer(const char* serverUrl) {
+  deviceClient.begin(serverUrl, FW_VERSION);
+  for (int attempt = 0; attempt < 3; attempt++) {
+    RegisterResult reg = deviceClient.registerDevice();
+    if (!reg.ok) {
+      Serial.printf("register failed: %s\n", reg.err.c_str());
+      status.showError("Pairing failed", reg.err.c_str());
+      return "";
+    }
+    Serial.printf("claim code %s (expires in %ds)\n", reg.claimCode.c_str(),
+                  reg.expiresInSec);
+    status.showPairing(reg.claimCode.c_str(), serverUrl);
+
+    uint32_t start = millis();
+    while (millis() - start < (uint32_t)reg.expiresInSec * 1000UL) {
+      delay(10000);  // poll every 10 s; the e-paper keeps showing the code
+      ClaimResult claim = deviceClient.pollClaim(reg.claimCode.c_str());
+      if (claim.state == ClaimState::Claimed) {
+        Serial.println("paired");
+        status.showPaired();
+        return claim.token;
+      }
+      if (claim.state == ClaimState::HttpError) {
+        Serial.printf("claim poll error: %s\n", claim.err.c_str());
+        // Keep polling: transient network errors shouldn't kill pairing.
+      }
+    }
+    Serial.println("claim code expired, re-registering");
+  }
+  status.showError("Pairing timed out", "Try again on next wake.");
+  return "";
 }
 
 void setup() {
@@ -86,7 +129,7 @@ void setup() {
         panel.sleep();
         power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
       }
-      // else fall through to fetch with new settings
+      // else fall through with the new settings
     }
   }
 
@@ -100,6 +143,24 @@ void setup() {
   bool clockOk = timeSync.begin(config.get().timezone);
   if (!clockOk) Serial.println("WARN: clock not synced");
 
+  Settings& s = config.get();
+
+  // --- Server URL: required before anything else. First boot (or a wipe)
+  // drops into the portal so the user can type it.
+  while (!s.serverUrl[0]) {
+    status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
+                      "http://192.168.4.1");
+    portal.ensureWiFi();
+    portal.run(10 * 60 * 1000);
+    config.load();  // re-read; portal saved to NVS
+    s = config.get();
+    if (!s.serverUrl[0]) {
+      status.showError("No server URL", "Set it in the portal, retrying.");
+      panel.sleep();
+      board.deepSleep((uint64_t)15 * 60 * 1000000ULL);
+    }
+  }
+
   // Quiet hours: sleep through, don't fetch.
   if (power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
     Serial.println("in quiet window, sleeping through");
@@ -107,31 +168,35 @@ void setup() {
     power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
   }
 
-  // --- OTA (battery-gated inside OtaManager; disabled when otaBase empty) ---
-  if (config.get().otaBase[0]) {
-    char versionUrl[600], fwUrl[600];
-    snprintf(versionUrl, sizeof(versionUrl), "%s/version",
-             config.get().otaBase);
-    snprintf(fwUrl, sizeof(fwUrl), "%s/firmware.bin", config.get().otaBase);
-    if (ota.checkAndInstall(versionUrl, fwUrl, FW_BUILD)) {
-      Serial.println("OTA installed, rebooting");
-      ESP.restart();
+  // --- Pairing (first boot, after unpair, or after a revoked token) ---
+  String token = config.deviceToken();
+  if (!token.length()) {
+    token = pairWithServer(s.serverUrl);
+    if (!token.length()) {
+      panel.sleep();
+      board.deepSleep((uint64_t)15 * 60 * 1000000ULL);  // retry in 15 min
     }
+    config.setDeviceToken(token);
+  }
+
+  // --- OTA (battery-gated inside OtaManager) ---
+  // Manual otaBase overrides the paired server (local dev); otherwise the
+  // paired server serves version + binary, authenticated like frames.
+  const char* otaServer = s.otaBase[0] ? s.otaBase : s.serverUrl;
+  const char* otaToken = s.otaBase[0] ? "" : token.c_str();
+  if (ota.checkAndInstall(otaServer, otaToken, FW_BUILD)) {
+    Serial.println("OTA installed, rebooting");
+    ESP.restart();
   }
 
   // --- Fetch + paint ---
-  Settings& s = config.get();
-  PanelDims d = panel.dims();
-  bool landscape = (s.orientation % 2) == 1;
-  spectra::UrlTokens tok{(uint32_t)esp_random(), landscape ? d.height : d.width,
-                         landscape ? d.width : d.height};
-  std::string url = spectra::expandUrlTemplate(s.imageUrl, tok);
-  Serial.printf("fetch %s\n", url.c_str());
   board.blinkLed(2);  // proof-of-life during the long fetch
-  switch (fetcher.fetch(url.c_str(), s.etag)) {
+  switch (fetcher.fetchFrame(s.serverUrl, token.c_str(), FW_VERSION,
+                             s.etag)) {
     case FetchResult::Ok:
       if (panel.drawPacked4bpp(fetcher.data(), fetcher.len())) {
         strncpy(s.etag, fetcher.etag().c_str(), sizeof(s.etag) - 1);
+        s.etag[sizeof(s.etag) - 1] = '\0';
         config.save();
         Serial.println("painted");
       } else {
@@ -140,6 +205,14 @@ void setup() {
       break;
     case FetchResult::NotModified:
       Serial.println("304: image unchanged, keeping panel");
+      break;
+    case FetchResult::Unauthorized:
+      // Owner unpaired us (or the token got wiped server-side): drop the
+      // token and re-pair on next wake. Never loop here -- the panel keeps
+      // showing the last good image.
+      Serial.println("token rejected, clearing for re-pair");
+      config.clearDeviceToken();
+      status.showError("Unpaired", "Pair again from the web console.");
       break;
     case FetchResult::Error:
       Serial.printf("fetch error: %s\n", fetcher.lastError().c_str());

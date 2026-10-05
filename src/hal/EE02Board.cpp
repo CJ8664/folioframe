@@ -119,9 +119,12 @@ void EE02Board::blinkLed(int times) {
 }
 
 String EE02Board::deviceId() {
+  // Must match the server's device-ID rule: "sf-" + 12 lowercase hex
+  // digits (see PROTOCOL.md). Uppercase or a short ID is rejected with
+  // "bad device_id" at register time.
   uint64_t mac = ESP.getEfuseMac();
-  char buf[12];
-  snprintf(buf, sizeof(buf), "SF-%02X%02X%02X", (uint8_t)(mac >> 16),
-           (uint8_t)(mac >> 8), (uint8_t)mac);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "sf-%012llx",
+           (unsigned long long)(mac & 0xFFFFFFFFFFFFULL));
   return String(buf);
 }

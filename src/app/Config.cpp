@@ -5,11 +5,11 @@
 #include "../core/UrlTemplate.h"
 
 static const char* kNs = "spectra";
+static const char* kDevNs = "spectra_dev";
 
 void Config::setDefaults() {
   memset(&settings_, 0, sizeof(settings_));
-  strncpy(settings_.imageUrl, "https://picsum.photos/seed/{seed}/1200/1600",
-          sizeof(settings_.imageUrl) - 1);
+  settings_.serverUrl[0] = '\0';  // must be set via portal before pairing
   settings_.intervalMinutes = 60;
   settings_.quietEnabled = true;
   settings_.quietStartMin = 22 * 60;  // 22:00
@@ -32,7 +32,7 @@ void Config::load() {
     return;
   }
   setDefaults();  // base, then override with stored keys
-  p.getString("url", settings_.imageUrl, sizeof(settings_.imageUrl));
+  p.getString("srv", settings_.serverUrl, sizeof(settings_.serverUrl));
   settings_.intervalMinutes = p.getUInt("interval", settings_.intervalMinutes);
   settings_.quietEnabled = p.getBool("qen", settings_.quietEnabled);
   settings_.quietStartMin = p.getInt("qs", settings_.quietStartMin);
@@ -44,6 +44,14 @@ void Config::load() {
   p.getString("otabase", settings_.otaBase, sizeof(settings_.otaBase));
   p.end();
 
+  // Migration from the v1 URL-template firmware: the old "url" key held an
+  // image URL template (containing {tokens}). A server URL never does, so
+  // a template here means "never configured for v2" -- start unset.
+  if (strchr(settings_.serverUrl, '{') || strchr(settings_.serverUrl, '}')) {
+    settings_.serverUrl[0] = '\0';
+    save();
+  }
+
   String err;
   if (!validate(settings_, err)) setDefaults();  // corrupt → safe defaults
 }
@@ -51,7 +59,7 @@ void Config::load() {
 void Config::save() {
   Preferences p;
   if (!p.begin(kNs, false)) return;
-  p.putString("url", settings_.imageUrl);
+  p.putString("srv", settings_.serverUrl);
   p.putUInt("interval", settings_.intervalMinutes);
   p.putBool("qen", settings_.quietEnabled);
   p.putInt("qs", settings_.quietStartMin);
@@ -64,11 +72,41 @@ void Config::save() {
   p.end();
 }
 
+String Config::deviceToken() {
+  Preferences p;
+  String t;
+  if (p.begin(kDevNs, true)) {
+    t = p.getString("dtoken", "");
+    p.end();
+  }
+  return t;
+}
+
+void Config::setDeviceToken(const String& token) {
+  Preferences p;
+  if (!p.begin(kDevNs, false)) return;
+  p.putString("dtoken", token);
+  p.end();
+}
+
+void Config::clearDeviceToken() {
+  Preferences p;
+  if (!p.begin(kDevNs, false)) return;
+  p.remove("dtoken");
+  p.end();
+}
+
 bool Config::validate(const Settings& s, String& err) {
   using namespace spectra;
-  if (!validImageUrl(std::string(s.imageUrl))) {
-    err = "image URL must start with http:// or https:// (<=512 chars)";
-    return false;
+  // Empty server URL is allowed (means "not configured yet"); the portal
+  // forces it before pairing. When set, it must be an http(s) URL that
+  // fits the 256-char NVS field (validImageUrl allows 512, too long here).
+  if (s.serverUrl[0]) {
+    if (strlen(s.serverUrl) > 256 ||
+        !validImageUrl(std::string(s.serverUrl))) {
+      err = "server URL must be http(s):// and <= 256 chars";
+      return false;
+    }
   }
   if (!validIntervalMinutes(s.intervalMinutes)) {
     err = "interval must be one of 15/30/60/120/240/480/720/1440";

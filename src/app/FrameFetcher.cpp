@@ -13,15 +13,19 @@ bool FrameFetcher::begin() {
   return buf_ != nullptr;
 }
 
-FetchResult FrameFetcher::fetch(const char* url, const char* etag) {
+FetchResult FrameFetcher::fetchFrame(const char* serverUrl, const char* token,
+                                     const char* fwVersion, const char* etag) {
   lastError_ = "";
   len_ = 0;
+  String url = String(serverUrl);
+  while (url.endsWith("/")) url.remove(url.length() - 1);
+  url += "/v1/device/frame";
+
   HTTPClient http;
   http.setTimeout(20000);
-  String u(url);
   WiFiClientSecure secure;
   bool ok;
-  if (u.startsWith("https://")) {
+  if (url.startsWith("https://")) {
     // Documented tradeoff (sven97, matthewfcarlson): no cert validation on
     // the device; use the companion server or a pinned local host for privacy.
     secure.setInsecure();
@@ -33,12 +37,13 @@ FetchResult FrameFetcher::fetch(const char* url, const char* etag) {
     lastError_ = "http.begin failed";
     return FetchResult::Error;
   }
+  http.addHeader("Authorization", String("Bearer ") + token);
   http.addHeader("X-Device-Id", board_->deviceId());
   http.addHeader("X-Device-Panel", board_->info().panelKind);
   PanelDims d = panel_->dims();
   http.addHeader("X-Device-Width", String(d.width));
   http.addHeader("X-Device-Height", String(d.height));
-  http.addHeader("X-Firmware-Version", "1.0.0");
+  http.addHeader("X-Firmware-Version", fwVersion);
   uint16_t mv = board_->batteryMilliVolts();
   if (mv > 0) {
     http.addHeader("X-Battery-Mv", String(mv));
@@ -50,6 +55,13 @@ FetchResult FrameFetcher::fetch(const char* url, const char* etag) {
   if (code == 304) {
     http.end();
     return FetchResult::NotModified;
+  }
+  if (code == 401) {
+    // Token revoked or never valid: the server owner unpaired us, or the
+    // token in NVS is corrupt. Caller clears it and re-pairs.
+    lastError_ = "unauthorized (re-pair needed)";
+    http.end();
+    return FetchResult::Unauthorized;
   }
   if (code != 200) {
     lastError_ = "HTTP " + String(code);

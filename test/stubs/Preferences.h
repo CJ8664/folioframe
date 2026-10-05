@@ -5,7 +5,10 @@ class Preferences {
   bool begin(const char*, bool) { return true; }
   void end() {}
   size_t getString(const char*, char*, size_t) { return 0; }
+  String getString(const char*, const String& d) { return d; }
   void putString(const char*, const char*) {}
+  void putString(const char*, const String&) {}
+  bool remove(const char*) { return true; }
   uint32_t getUInt(const char*, uint32_t d) { return d; }
   void putUInt(const char*, uint32_t) {}
   bool getBool(const char*, bool d) { return d; }

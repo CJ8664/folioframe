@@ -1,8 +1,25 @@
 """picsum.photos random-image source (no API key)."""
 import random
 import urllib.request
+from io import BytesIO
 
 from . import Source, register
+
+# Same rationale as sources/url.py: never read an unbounded body.
+MAX_DOWNLOAD = 25 * 1024 * 1024
+
+
+def _read_capped(resp):
+    chunks, total = [], 0
+    while True:
+        chunk = resp.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_DOWNLOAD:
+            raise ValueError("download too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @register
@@ -27,7 +44,6 @@ class PicsumSource(Source):
         req = urllib.request.Request(url, headers={"User-Agent": "spectra-frame"})
         with urllib.request.urlopen(req, timeout=30) as r:
             from PIL import Image
-            from io import BytesIO
-            img = Image.open(BytesIO(r.read()))
+            img = Image.open(BytesIO(_read_capped(r)))
             img.load()
         return img.convert("RGB")
