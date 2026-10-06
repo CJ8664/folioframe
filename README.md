@@ -1,8 +1,12 @@
-# SpectraFrame
+# FolioFrame
 
 An open-source e-paper photo frame: ESP32-S3 firmware plus a self-hosted
 companion server. First hardware target: **Seeed XIAO EE02 + Good Display
 GDEB0709E01 7.09" Spectra 6** (6-color e-ink).
+
+Like every good idea, it stands on the shoulders of the open-source
+community — but this is a fresh, from-scratch build: its own firmware,
+its own server, its own protocol.
 
 The frame wakes up, fetches a dithered photo from your server, paints it,
 and goes back to deep sleep. That's the whole loop:
@@ -46,7 +50,7 @@ See [docs/SELFHOST.md](docs/SELFHOST.md) and
 1. Install [PlatformIO](https://platformio.org/), open this folder, env `ee02`.
 2. **Enable PSRAM** (required — the 960 KB frame buffer lives there).
 3. `pio run -t upload`, then `pio device monitor`.
-4. First boot: join the `SF-Setup-…` Wi-Fi network, open `http://192.168.4.1`,
+4. First boot: join the `FF-Setup-…` Wi-Fi network, open `http://192.168.4.1`,
    enter your Wi-Fi details **and your server URL**
    (e.g. `https://frame.example.com`).
 5. The screen shows a claim code — enter it at `<server>/claim` in the

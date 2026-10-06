@@ -1438,7 +1438,7 @@ if('serviceWorker' in navigator){
     || window.navigator.standalone;
   if(ios && !standalone){
     show('Add to Home Screen',function(){
-      alert('Tap Share, then "Add to Home Screen" to install SpectraFrame.');
+      alert('Tap Share, then "Add to Home Screen" to install FolioFrame.');
     });
   }
 })();
@@ -1450,7 +1450,7 @@ def WELCOME_HTML():
     """Public welcome page: frosted-glass hero, GIS sign-in only."""
     return """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
-<title>SpectraFrame</title>
+<title>FolioFrame</title>
 """ + PWA_HEAD + """<style>""" + GLASS_CSS + """
 #err{margin-top:10px}
 </style>
@@ -1460,8 +1460,8 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <div class='blob b3'></div></div>
 <main class='sheet'>
   <div class='card hero'>
-    <img src='/static/icon-192.png' alt='SpectraFrame'>
-    <h1>SpectraFrame</h1>
+    <img src='/static/icon-192.png' alt='FolioFrame'>
+    <h1>FolioFrame</h1>
     <p class='tag'>Your memories, floating on glass.</p>
     <div id='gbtn'></div>
     <p id='err' class='err'></p>
@@ -1484,7 +1484,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     </div></div>
   </div>
   <div class='card installbar' id='installcard'>
-    <div style='flex:1'><b>Install SpectraFrame</b><br>
+    <div style='flex:1'><b>Install FolioFrame</b><br>
     <span class='muted'>Add it to your home screen for the full app feel.</span></div>
     <button class='btn sm' id='installbtn' style='display:none'>Install app</button>
   </div>
@@ -1578,7 +1578,7 @@ def _flash_page(available, version, versions):
         <div class='feat'><div class='ic'>&#x2699;&#xFE0F;</div><div>
           <b>Flash, then configure</b>
           <span>After flashing, the frame's Wi-Fi portal lets you point it at
-          <i>any</i> SpectraFrame server — this one or your own.</span>
+          <i>any</i> FolioFrame server — this one or your own.</span>
         </div></div>
       </div>
       <div class='card'>
@@ -1724,7 +1724,7 @@ esp-web-install-button{--esp-tools-button-color:var(--blue);
 
 CONSOLE_HTML = """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
-<title>SpectraFrame</title>
+<title>FolioFrame</title>
 """ + PWA_HEAD + """<style>""" + GLASS_CSS + """</style>
 </head><body>
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
