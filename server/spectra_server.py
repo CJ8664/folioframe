@@ -159,7 +159,6 @@ class Server:
                            or self.firebase_cfg.get("public_url")
                            or os.environ.get("PUBLIC_URL", "")).rstrip("/")
 
-        self.lock = threading.Lock()
         if self.firebase_on:
             project = self.firebase_cfg["project_id"]
             self.store = FirestoreStore(project_id=project)
@@ -235,7 +234,7 @@ class Server:
                     return v
         except OSError:
             pass
-        return self.cfg.get("fw_version", "2.0.0")
+        return self.cfg.get("fw_version", "0.0.2")
 
     def fw_versions(self):
         """All published firmware versions, newest first. Discovered from
@@ -253,6 +252,25 @@ class Server:
         versions.sort(key=lambda v: tuple(int(x) for x in v.split(".")),
                       reverse=True)
         return versions
+
+    def fw_md5(self):
+        """MD5 of the published firmware.bin, cached by (size, mtime) so
+        the OTA version endpoint doesn't re-hash the file on every request."""
+        try:
+            st = os.stat(FW_PATH)
+        except OSError:
+            return None
+        key = (st.st_size, st.st_mtime_ns)
+        cached = getattr(self, "_fw_md5_cache", None)
+        if cached and cached[0] == key:
+            return cached[1]
+        h = hashlib.md5()
+        with open(FW_PATH, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
+        self._fw_md5_cache = (key, digest)
+        return digest
 
     def fw_bin_for(self, version):
         """File name of the firmware binary for a version, or None."""
@@ -761,6 +779,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(404, {"ok": False, "error": "not found"})
                 return
             ctype = {".png": "image/png", ".jpg": "image/jpeg",
+                     ".css": "text/css",
                      ".svg": "image/svg+xml", ".ico": "image/x-icon",
                      ".webmanifest": "application/manifest+json",
                      ".js": "application/javascript"}.get(
@@ -892,12 +911,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # binary is published so the device verifies what it flashes
             # (matters because the device skips TLS cert validation).
             manifest = f"build={APP.build}\n"
-            if os.path.exists(FW_PATH):
-                h = hashlib.md5()
-                with open(FW_PATH, "rb") as f:
-                    for chunk in iter(lambda: f.read(65536), b""):
-                        h.update(chunk)
-                manifest += f"md5={h.hexdigest()}\n"
+            md5 = APP.fw_md5()
+            if md5:
+                manifest += f"md5={md5}\n"
             self._send(200, "text/plain", manifest.encode())
             return
 
@@ -1260,160 +1276,31 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # Frosted-glass design system (iOS HIG + Umbrel 2.0 inspired).
 # Dark-first; light mode via prefers-color-scheme. Mobile-first layout.
 # ---------------------------------------------------------------------------
-GLASS_CSS = """
-:root{
-  --bg:#070a13;
-  --glass:rgba(255,255,255,.09);
-  --glass2:rgba(255,255,255,.15);
-  --edge:rgba(255,255,255,.17);
-  --txt:#f4f6ff; --dim:rgba(240,244,255,.68); --faint:rgba(240,244,255,.45);
-  --blue:#0a84ff; --blue2:#5e5ce6; --green:#30d158; --red:#ff453a; --amber:#ff9f0a;
-  --r:22px; --rs:14px;
-  --shadow:0 18px 50px rgba(0,0,0,.45);
-  --font:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',Roboto,sans-serif;
-}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;font-family:var(--font);color:var(--txt);background:var(--bg);
-  min-height:100dvh;line-height:1.55;font-size:16px;
-  padding-bottom:env(safe-area-inset-bottom)}
-.bg{position:fixed;inset:0;z-index:-1;overflow:hidden;background:
-  radial-gradient(1200px 800px at 85% -10%,#1b2358 0%,transparent 60%),
-  radial-gradient(1000px 700px at -10% 30%,#0e4a6e 0%,transparent 55%),
-  radial-gradient(900px 900px at 50% 110%,#3b1d6e 0%,transparent 60%),#070a13}
-.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5;
-  animation:drift 26s ease-in-out infinite alternate}
-.b1{width:52vmax;height:52vmax;left:-14vmax;top:-12vmax;background:#2b3a9e}
-.b2{width:44vmax;height:44vmax;right:-12vmax;top:22%;background:#0e7d8c;animation-delay:-9s}
-.b3{width:40vmax;height:40vmax;left:20%;bottom:-16vmax;background:#6e2bb8;animation-delay:-17s}
-@keyframes drift{to{transform:translate(6vmax,4vmax) scale(1.12)}}
-@media (prefers-reduced-motion:reduce){.blob{animation:none}}
-.sheet{max-width:600px;margin:0 auto;padding:20px 16px 40px}
-.topbar{position:sticky;top:0;z-index:10;margin:0 -16px;padding:10px 16px;
-  padding-top:calc(10px + env(safe-area-inset-top));
-  background:rgba(7,10,19,.55);backdrop-filter:blur(24px) saturate(170%);
-  -webkit-backdrop-filter:blur(24px) saturate(170%);
-  border-bottom:1px solid rgba(255,255,255,.1)}
-.topbar-in{max-width:600px;margin:0 auto;display:flex;align-items:center;gap:10px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;
-  letter-spacing:-.01em}
-.brand img{width:32px;height:32px;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,.4)}
-.topbar .sp{flex:1}
-.avatar{width:34px;height:34px;border-radius:50%;background:var(--glass2);
-  border:1px solid var(--edge);display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:15px;color:var(--txt)}
-.iconbtn{width:40px;height:40px;border-radius:50%;border:1px solid var(--edge);
-  background:var(--glass);color:var(--txt);font-size:17px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;
-  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  transition:transform .15s ease,opacity .15s ease}
-.iconbtn:active{transform:scale(.92);opacity:.8}
-.card{background:var(--glass);border:1px solid var(--edge);border-radius:var(--r);
-  box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.22);
-  backdrop-filter:blur(24px) saturate(170%);
-  -webkit-backdrop-filter:blur(24px) saturate(170%);
-  padding:22px;margin:16px 0}
-.card h2{margin:0 0 4px;font-size:20px;font-weight:700;letter-spacing:-.02em}
-.card .sub{margin:0 0 14px;color:var(--dim);font-size:14.5px}
-.hero{text-align:center;padding:40px 24px 32px}
-.hero img{width:92px;height:92px;border-radius:26px;
-  box-shadow:0 16px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.3)}
-.hero h1{font-size:34px;margin:18px 0 8px;font-weight:700;letter-spacing:-.03em}
-.hero .tag{color:var(--dim);font-size:17px;margin:0 0 24px}
-.feat{display:flex;gap:14px;align-items:flex-start;padding:13px 2px;
-  border-top:1px solid rgba(255,255,255,.09)}
-.feat:first-of-type{border-top:none}
-.feat .ic{flex:0 0 38px;width:38px;height:38px;border-radius:12px;
-  background:linear-gradient(135deg,rgba(10,132,255,.35),rgba(94,92,230,.35));
-  border:1px solid rgba(255,255,255,.2);display:flex;align-items:center;
-  justify-content:center;font-size:19px}
-.feat b{display:block;font-size:15.5px}
-.feat span{color:var(--dim);font-size:14px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  min-height:48px;padding:0 22px;border:none;border-radius:var(--rs);
-  background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;
-  font-family:var(--font);font-size:16.5px;font-weight:600;cursor:pointer;
-  text-decoration:none;box-shadow:0 8px 24px rgba(10,132,255,.35),
-  inset 0 1px 0 rgba(255,255,255,.25);
-  transition:transform .15s cubic-bezier(.2,.8,.2,1),opacity .15s ease}
-.btn:active{transform:scale(.96);opacity:.85}
-.btn.ghost{background:var(--glass2);border:1px solid var(--edge);color:var(--txt);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);
-  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
-.btn.sm{min-height:40px;padding:0 16px;font-size:14.5px;border-radius:12px}
-.btn:disabled{opacity:.45}
-.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
-#gbtn{display:flex;justify-content:center;margin:6px 0;min-height:48px}
-.err{color:#ffb4ab;min-height:1.5em;font-size:14px;text-align:center;margin:8px 0}
-.msg{font-size:14px;margin:10px 0 0;color:var(--dim)}
-.msg.err{color:#ffb4ab}.msg.ok{color:#7dffa8}
-.muted{color:var(--dim);font-size:14px}
-.fine{font-size:13px;color:var(--faint);text-align:center;margin:12px 0 0}
-.pill{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;
-  padding:6px 13px;border-radius:999px;border:1px solid var(--edge);
-  background:var(--glass2);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-.pill .dot{width:8px;height:8px;border-radius:50%;background:var(--amber)}
-.pill.on .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
-.seg{display:flex;background:rgba(0,0,0,.28);border:1px solid var(--edge);
-  border-radius:16px;padding:4px;gap:2px;overflow-x:auto;
-  -webkit-overflow-scrolling:touch;margin:4px 0 6px}
-.seg button{flex:1 0 auto;border:none;background:transparent;color:var(--dim);
-  font-family:var(--font);font-size:14.5px;font-weight:600;min-height:44px;
-  padding:0 16px;border-radius:12px;cursor:pointer;white-space:nowrap;
-  transition:transform .15s ease,background .2s ease}
-.seg button:active{transform:scale(.96)}
-.seg button.sel{background:rgba(255,255,255,.92);color:#0a0f1e;
-  box-shadow:0 4px 14px rgba(0,0,0,.3)}
-.dev{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.1);
-  border-radius:18px;padding:16px;margin:12px 0}
-.dev .nm{font-weight:700;font-size:16px}
-.dev .meta{color:var(--faint);font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
-.dev img{width:100%;border-radius:12px;margin:10px 0;border:1px solid rgba(255,255,255,.12)}
-.dev form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}
-input[type=file]{color:var(--dim);font-size:13.5px;max-width:100%}
-input[type=text],input:not([type]){background:rgba(0,0,0,.3);
-  border:1px solid var(--edge);border-radius:var(--rs);color:var(--txt);
-  font-family:var(--font);font-size:17px;padding:0 16px;min-height:50px;width:100%}
-input::placeholder{color:var(--faint)}
-.code{font-family:ui-monospace,SF Mono,Menlo,monospace;font-size:30px !important;
-  letter-spacing:6px;text-align:center;text-transform:uppercase}
-:focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:8px}
-.installbar{display:none;align-items:center;gap:12px}
-.installbar.show{display:flex}
-.kv{display:flex;justify-content:space-between;align-items:center;gap:10px;
-  padding:12px 2px;border-top:1px solid rgba(255,255,255,.09);font-size:15px}
-.kv:first-of-type{border-top:none}
-.kv .k{color:var(--dim)}
-@media (min-width:640px){.hero h1{font-size:40px}.sheet{padding-top:28px}}
-@media (prefers-color-scheme:light){
-  :root{--bg:#eef1f8;--glass:rgba(255,255,255,.62);--glass2:rgba(255,255,255,.75);
-    --edge:rgba(15,25,60,.14);--txt:#0b1020;--dim:rgba(20,30,60,.66);
-    --faint:rgba(20,30,60,.42);--shadow:0 18px 44px rgba(30,50,120,.16)}
-  .bg{background:
-    radial-gradient(1200px 800px at 85% -10%,#c9d4ff 0%,transparent 60%),
-    radial-gradient(1000px 700px at -10% 30%,#bfe9f5 0%,transparent 55%),
-    radial-gradient(900px 900px at 50% 110%,#e3c9ff 0%,transparent 60%),#eef1f8}
-  .blob{opacity:.55}
-  .topbar{background:rgba(238,241,248,.6)}
-  .seg{background:rgba(20,30,60,.08)}
-  .seg button.sel{background:#fff;color:#0b1020}
-  .dev{background:rgba(255,255,255,.5)}
-  input[type=text],input:not([type]){background:rgba(255,255,255,.7);color:#0b1020}
-  .feat .ic{background:linear-gradient(135deg,rgba(10,132,255,.18),rgba(94,92,230,.18))}
-  .msg.err{color:#b3261e}.msg.ok{color:#146c2e}.err{color:#b3261e}
-}
-"""
+THEME_CSS = "<link rel='stylesheet' href='/static/folioframe.css'>"
 
 PWA_HEAD = """
 <meta charset='utf-8'>
 <link rel='manifest' href='/manifest.webmanifest'>
-<meta name='theme-color' content='#070a13'>
+<meta name='theme-color' content='#d9d1c4'>
 <meta name='mobile-web-app-capable' content='yes'>
 <meta name='apple-mobile-web-app-capable' content='yes'>
-<meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>
+<meta name='apple-mobile-web-app-status-bar-style' content='default'>
 <meta name='apple-mobile-web-app-title' content='FolioFrame'>
 <link rel='apple-touch-icon' href='/static/icon-180.png'>
 <link rel='icon' type='image/png' sizes='192x192' href='/static/icon-192.png'>
+<script>
+(function(){try{
+  var t=localStorage.getItem('folioframe-theme');
+  if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+  if(t==='dark')document.documentElement.classList.add('dark');
+}catch(e){}})();
+function ffThemeToggle(){
+  try{
+    var d=document.documentElement.classList.toggle('dark');
+    localStorage.setItem('folioframe-theme',d?'dark':'light');
+  }catch(e){}
+}
+</script>
 """
 
 SW_REGISTER = """
@@ -1451,7 +1338,7 @@ def WELCOME_HTML():
     return """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <title>FolioFrame</title>
-""" + PWA_HEAD + """<style>""" + GLASS_CSS + """
+""" + PWA_HEAD + THEME_CSS + """
 #err{margin-top:10px}
 </style>
 <script src='https://accounts.google.com/gsi/client' async defer></script>
@@ -1657,10 +1544,11 @@ def _flash_page(available, version, versions):
   </div>"""
     return ("""<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
-<title>Flash SpectraFrame firmware</title>
-""" + PWA_HEAD + """<style>""" + GLASS_CSS + """
+<title>Flash FolioFrame firmware</title>
+""" + PWA_HEAD + THEME_CSS + """
+<style>
 .mono{font-family:ui-monospace,monospace;font-size:.9em}
-esp-web-install-button{--esp-tools-button-color:var(--blue);
+esp-web-install-button{--esp-tools-button-color:var(--accent);
   --esp-tools-button-text-color:#fff}
 /* Flash page 30/70 split */
 .flash-split{display:flex;gap:16px;align-items:flex-start}
@@ -1680,14 +1568,14 @@ esp-web-install-button{--esp-tools-button-color:var(--blue);
   --md-sys-color-surface:#141a30;
   --md-sys-color-on-surface:#f4f6ff;
   --md-sys-color-on-surface-variant:rgba(240,244,255,.68);
-  --md-sys-color-primary:#0a84ff;
+  --md-sys-color-primary:var(--accent);
   --md-sys-color-on-primary:#ffffff;
   --md-sys-color-primary-container:rgba(10,132,255,.30);
   --md-sys-color-on-primary-container:#f4f6ff;
   --md-sys-color-secondary-container:rgba(10,132,255,.18);
   --md-sys-color-on-secondary-container:#f4f6ff;
-  --md-sys-color-tertiary:#5e5ce6;
-  --md-sys-color-tertiary-container:rgba(94,92,230,.30);
+  --md-sys-color-tertiary:var(--secondary);
+  --md-sys-color-tertiary-container:rgba(133,152,121,.30);
   --md-sys-color-surface-container:rgba(255,255,255,.06);
   --md-sys-color-surface-container-highest:rgba(255,255,255,.10);
   --md-sys-color-error:#ff453a;
@@ -1698,7 +1586,7 @@ esp-web-install-button{--esp-tools-button-color:var(--blue);
   border-bottom:1px solid rgba(255,255,255,.08)}
 .parts th{opacity:.7;font-weight:600}
 .parts td.num{text-align:right}
-.err{color:#ff8a80}
+.err{color:var(--error)}
 @media(max-width:900px){
   .flash-split{flex-direction:column}
   .flash-left{flex:none;width:100%}
@@ -1709,13 +1597,15 @@ esp-web-install-button{--esp-tools-button-color:var(--blue);
 <div class='blob b3'></div></div>
 <main class='sheet'>
   <div class='topbar'><div class='topbar-in'>
-    <span class='brand'><img src='/static/icon-192.png' alt=''>SpectraFrame</span>
+    <span class='brand'><img src='/static/icon-192.png' alt=''>FolioFrame</span>
     <span class='sp'></span>
+    <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
+      aria-label='Toggle theme'>&#x1F315;</button>
     <a class='btn ghost sm' href='/'>Home</a>
   </div></div>
   <div class='card hero'>
     <h1>Flash the frame</h1>
-    <p class='tag'>Install SpectraFrame firmware over USB, right from
+    <p class='tag'>Install FolioFrame firmware over USB, right from
     this page. No login needed.</p>
   </div>""" + body + """
 </main>
@@ -1725,13 +1615,15 @@ esp-web-install-button{--esp-tools-button-color:var(--blue);
 CONSOLE_HTML = """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <title>FolioFrame</title>
-""" + PWA_HEAD + """<style>""" + GLASS_CSS + """</style>
+""" + PWA_HEAD + THEME_CSS + """
 </head><body>
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
 <div class='blob b3'></div></div>
 <header class='topbar'><div class='topbar-in'>
-  <span class='brand'><img src='/static/icon-192.png' alt=''>SpectraFrame</span>
+  <span class='brand'><img src='/static/icon-192.png' alt=''>FolioFrame</span>
   <span class='sp'></span>
+  <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
+    aria-label='Toggle theme'>&#x1F315;</button>
   <button class='btn ghost sm' id='installbtn' style='display:none'>Install</button>
   <span class='avatar' id='avatar' title=''>?</span>
   <button class='iconbtn' onclick='logout()' title='Sign out'
@@ -1941,7 +1833,7 @@ init();
 CLAIM_HTML = """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <title>Pair a frame &middot; SpectraFrame</title>
-""" + PWA_HEAD + """<style>""" + GLASS_CSS + """
+""" + PWA_HEAD + THEME_CSS + """
 form .btn{width:100%;margin-top:14px}
 </style>
 </head><body>

@@ -423,13 +423,9 @@ void setup() {
     spectra::OtaManifest manifest;
     if (ota.getManifest(otaServer, otaToken, manifest) &&
         spectra::shouldUpdate(FW_BUILD, manifest)) {
-      Settings& ms = config.get();
-      ms.otaUpdatePending = true;
-      ms.otaPendingBuild = manifest.build;
-      strncpy(ms.otaPendingVersion, manifest.version.c_str(),
-              sizeof(ms.otaPendingVersion) - 1);
-      ms.otaPendingVersion[sizeof(ms.otaPendingVersion) - 1] = '\0';
-      config.save();
+      // Read-compare-write inside savePendingUpdate(): re-staging the same
+      // update on every wake must not cost an NVS write each time.
+      config.savePendingUpdate(true, manifest.build, manifest.version.c_str());
       Serial.printf("OTA: update staged: build %u\n", manifest.build);
     }
   }

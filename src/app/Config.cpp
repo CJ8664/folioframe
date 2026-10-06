@@ -91,6 +91,47 @@ void Config::save() {
   p.end();
 }
 
+// Stage (or clear) a manual-mode pending update with read-compare-write:
+// NVS appends a fresh entry for every put* -- even when the value is
+// unchanged -- so re-staging the same pending update on every wake burns
+// flash cycles for nothing. Read the stored values first and skip the
+// write entirely when they already match. The in-memory copy is kept in
+// sync either way; stored content (including version truncation) matches
+// what save() would have persisted.
+void Config::savePendingUpdate(bool pending, uint32_t build,
+                               const char* version) {
+  char ver[sizeof(settings_.otaPendingVersion)];
+  strncpy(ver, version ? version : "", sizeof(ver) - 1);
+  ver[sizeof(ver) - 1] = '\0';
+
+  bool unchanged = false;
+  {
+    Preferences p;
+    if (p.begin(kNs, true)) {
+      char curVer[sizeof(settings_.otaPendingVersion)] = {0};
+      p.getString("otapver", curVer, sizeof(curVer));
+      // Defaults are the bitwise complements of the new values: a missing
+      // key can never read back "unchanged".
+      unchanged = p.getBool("otapend", !pending) == pending &&
+                  p.getUInt("otapbld", ~build) == build &&
+                  strcmp(curVer, ver) == 0;
+      p.end();
+    }
+  }
+
+  settings_.otaUpdatePending = pending;
+  settings_.otaPendingBuild = build;
+  strcpy(settings_.otaPendingVersion, ver);
+
+  if (unchanged) return;
+  Preferences p;
+  if (!p.begin(kNs, false)) return;
+  p.putBool("otapend", settings_.otaUpdatePending);
+  p.putUInt("otapbld", settings_.otaPendingBuild);
+  p.putString("otapver", settings_.otaPendingVersion);
+  p.end();
+}
+
 String Config::deviceToken() {
   Preferences p;
   String t;

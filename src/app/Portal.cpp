@@ -2,6 +2,43 @@
 
 #include <WiFi.h>
 
+namespace {
+// HTML-escape a user- or device-controlled string before interpolating it
+// into the portal HTML. Values like the server URL, timezone, device name,
+// and OTA base URL are typed by the user (or come from the device) and would
+// otherwise break out of the input value='...' attribute or inject markup
+// into the settings page.
+String escapeHtml(const String& in) {
+  String out;
+  const char* p = in.c_str();
+  for (size_t i = 0; p[i]; i++) {
+    switch (p[i]) {
+      case '&':
+        out += "&amp;";
+        break;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      case '\'':
+        out += "&#39;";
+        break;
+      default: {
+        char ch[2] = {p[i], '\0'};
+        out += ch;
+        break;
+      }
+    }
+  }
+  return out;
+}
+}  // namespace
+
 bool Portal::ensureWiFi() {
   wm_.setConnectTimeout(30);
   wm_.setConfigPortalTimeout(300);
@@ -65,7 +102,7 @@ String Portal::settingsPage() {
   String h = "<html><body><h2>FolioFrame settings</h2>"
              "<form method='POST' action='/save'>"
              "Server URL<br><input name='srv' size='60' value='" +
-             String(s.serverUrl) +
+             escapeHtml(String(s.serverUrl)) +
              "' placeholder='https://frame.example.com'><br>"
              "<small>Your FolioFrame server. The frame pairs with it and "
              "fetches images from it.</small><br><br>"
@@ -79,16 +116,16 @@ String Portal::settingsPage() {
              "End <input type='time' name='qe' value='" + qe +
              "'><br><br>"
              "Timezone (auto or POSIX)<br><input name='tz' value='" +
-             String(s.timezone) +
+             escapeHtml(String(s.timezone)) +
              "'><br><br>"
              "Device name<br><input name='name' value='" +
-             String(s.deviceName) +
+             escapeHtml(String(s.deviceName)) +
              "'><br><br>"
              "Orientation (0-3)<br><input name='orient' size='3' value='" +
              String(s.orientation) +
              "'><br><br>"
              "OTA base URL (empty = use server)<br><input name='otabase' size='40' value='" +
-             String(s.otaBase) +
+             escapeHtml(String(s.otaBase)) +
              "'><br><br>"
              "<input type='checkbox' name='otaauto' value='1'" +
              (s.otaAutoInstall ? " checked" : "") +

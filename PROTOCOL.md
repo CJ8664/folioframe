@@ -36,13 +36,14 @@ Small, versioned HTTP contract. Any server can feed the frame by implementing it
 DEVICE                                        SERVER                    CONSOLE
   |-- POST /v1/device/register ---------------→|                            |
   |   {device_id, panel, fw}                   |                            |
-  |←-- 201 {claim_code, expires_in} -----------|                            |
+  |←-- 201 {ok:true, claim_code,              |                            |
+  |         expires_in} ----------------------|                            |
   |   (shows XXXX-XXXX on e-ink;               |                            |
   |    polls POST /v1/device/claim every 10s)  |                            |
   |                                            |←-- signed-in user enters --|
   |                                            |   code at /claim          |
   |                                            |-- binds device → user ----→|
-  |←-- 200 {status:"claimed",                  |                            |
+  |←-- 200 {ok:true, status:"claimed",        |                            |
   |         device_token, device_id} ----------|                            |
   |   (stores token in NVS, reboots to normal mode)                         |
 ```
@@ -51,11 +52,19 @@ DEVICE                                        SERVER                    CONSOLE
   Rate-limited (5/min/IP). Re-registering an already-paired device issues a
   fresh code but keeps the old token valid until the new claim completes —
   ownership transfer requires physical access to read the new code.
-- Claim codes: 8 chars from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as
-  `XXXX-XXXX`. TTL 10 minutes, single-use, constant-time comparison.
-- The claim poll returns `{"status":"pending"}` until approval — identical
-  shape for bad codes (no guessing oracle). The token is delivered **once**;
-  after delivery the code is burned.
+- Claim codes: `XXXX-XXXX` — 8 chars drawn from
+  `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0/O/1/I/L), with a `-` separator.
+  The dashed form is the code: it is what `/v1/device/register` returns in
+  `claim_code`, what the device shows and sends back verbatim, and what the
+  server stores. TTL 10 minutes, single-use, constant-time comparison;
+  input is case-insensitive (`strip().upper()` before compare).
+- The claim poll returns `{"ok": true, "status":"pending"}` until approval —
+  identical shape for bad codes (no guessing oracle). The token is delivered
+  on first successful poll; the code is then marked used, but the server
+  keeps the token stashed for a 120-second re-delivery grace: if the 200
+  response never reached the device, re-polling with the same code returns
+  the same token instead of losing it forever. After the grace window the
+  token is wiped.
 - Unpair: console `DELETE /api/devices/{id}` (owner only), or the device
   itself `POST /v1/device/unpair` (Bearer; used by factory reset). Both revoke
   the token immediately.
@@ -67,13 +76,16 @@ DEVICE                                        SERVER                    CONSOLE
 | `POST` | `/v1/device/register` | unauthenticated, rate-limited; starts claim flow |
 | `POST` | `/v1/device/claim` | `{device_id, claim_code}`; `pending` or `claimed`+token |
 | `GET` | `/v1/device/frame` | packed-4bpp frame **for this device**; `If-None-Match` → `304` |
-| `POST` | `/v1/device/status` | heartbeat `{battery_mv, battery_pct, rssi, fw}` |
+| `POST` | `/v1/device/status` | heartbeat `{fw, fw_build, battery_pct, rssi}` |
 | `POST` | `/v1/device/unpair` | device-initiated unpair (factory reset) |
 | `GET` | `/v1/device/ota/version` | `build=N` manifest (`md5=` line when a binary is published) |
 | `GET` | `/v1/device/ota/firmware.bin` | ESP32 app image (when published) |
 
-Auth failures return `401`; a valid token addressing anything outside its own
-device returns `404` (never `403`, to avoid leaking device existence).
+Auth failures return `401` with body `{"ok": false, "error": "device auth
+required"}`. Device endpoints are token-scoped — there is no per-ID device
+addressing on `/v1/device/*`, so no `403` arises there; human per-device
+endpoints return `404` (never `403`) for a device owned by someone else, to
+avoid leaking device existence.
 
 ### Frame fetch
 
@@ -82,9 +94,11 @@ device returns `404` (never `403`, to avoid leaking device existence).
 | Header | Example | Purpose |
 |---|---|---|
 | `Authorization` | `Bearer <256-bit token>` | device identity (required) |
+| `X-Device-Id` | `ff-94a9a811c2f4` | device identity (redundant, aids logging) |
 | `X-Device-Panel` | `gdeb0709e01` | panel kind; server picks correct variant |
 | `X-Device-Width` / `X-Device-Height` | `1200` / `1600` | panel-native geometry |
 | `X-Firmware-Version` | `2.0.0` | fleet views |
+| `X-Battery-Mv` / `X-Battery-Pct` | `4100` / `85` | battery telemetry (sent only when a reading exists) |
 | `If-None-Match` | `"abc123"` | sent when the device has a cached ETag |
 
 **Success response:**
@@ -114,7 +128,7 @@ the manifest when the server publishes the hash. Full chain validation is
 a welcome contribution (see `FrameFetcher.cpp` / `OtaManager.cpp`).
 
 **Errors:** `4xx/5xx` → device keeps the current image, backs off, retries next
-wake. `404` with an empty queue is normal: keep image, sleep.
+wake. `503` with an empty queue is normal: keep image, sleep.
 
 ## Human API (all require signed-in session; mutations require CSRF token)
 
@@ -154,5 +168,7 @@ assigned source where its rotation left off.
 ## Versioning
 
 The major version in this document's title is the contract version. Breaking
-changes bump it; the device sends `X-Frame-Format` and firmware version so the
-server can reject mismatches explicitly.
+changes bump it; the device sends `X-Firmware-Version` (plus `X-Device-Panel`
+and geometry headers) so the server can reject mismatches explicitly, and the
+server labels each frame with the `X-Frame-Format: packed4bpp` response header
+so the device can sanity-check the payload format.

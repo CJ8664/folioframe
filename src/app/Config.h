@@ -33,6 +33,13 @@ class Config {
   void resetDefaults();
   Settings& get() { return settings_; }
 
+  // Stage (or clear) a manual-mode pending update with read-compare-write:
+  // skips the NVS write entirely when the stored values already match, so
+  // re-staging the same pending update on every wake doesn't cost flash
+  // wear. The in-memory copy is updated either way. Behavior (stored
+  // values, field truncation) is identical to save() for these fields.
+  void savePendingUpdate(bool pending, uint32_t build, const char* version);
+
   // Device pairing credential (separate NVS namespace, never logged).
   String deviceToken();
   void setDeviceToken(const String& token);
