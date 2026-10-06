@@ -1,6 +1,6 @@
 #pragma once
 // JsonLite: a tiny JSON string-value extractor for the small, flat objects
-// the SpectraFrame server returns (device register / claim responses).
+// the FolioFrame server returns (device register / claim responses).
 //
 // Deliberately NOT a general parser: it finds one top-level "key" and
 // returns its decoded string value, handling \" and \\ escapes. Returns ""

@@ -49,6 +49,11 @@ class Panel {
     return drawStatus(title, lines, 5);
   }
 
+  // Small help QR (bottom-right) for non-photo status screens, drawn into
+  // the same framebuffer before the single refresh. Default: no-op for
+  // panels without QR support.
+  virtual void drawHelpQR() {}
+
   virtual void sleep() = 0;  // panel low-power mode
 
   // v2 hook: on-device JPEG decode path. Default: unsupported.

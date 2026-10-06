@@ -45,6 +45,17 @@ bool parseOtaManifest(const std::string& text, OtaManifest& out) {
         if (!validMd5(val)) return false;
         m.md5 = val;
         m.hasMd5 = true;
+      } else if (key == "version") {
+        // Optional display string ("4.4.0"). Still strict about content so
+        // a corrupt manifest can't inject screen text.
+        if (val.empty() || val.size() > 24) return false;
+        for (char c : val) {
+          bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                    (c >= 'A' && c <= 'Z') || c == '.' || c == '-' ||
+                    c == '_';
+          if (!ok) return false;
+        }
+        m.version = val;
       } else {
         return false;  // unknown keys rejected (strict)
       }

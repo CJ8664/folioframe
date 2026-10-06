@@ -95,7 +95,7 @@ class DashboardSource(Source):
             d.text((90, y + 170), "OFFLINE", font=_font(80), fill=RED)
 
         d.rectangle((0, H - 120, W, H), fill=YELLOW)
-        d.text((80, H - 95), "SPECTRAFRAME", font=_font(56), fill=BLACK)
+        d.text((80, H - 95), "FOLIOFRAME", font=_font(56), fill=BLACK)
         return img
 
     def describe(self):

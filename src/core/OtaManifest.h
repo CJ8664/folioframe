@@ -1,6 +1,7 @@
 #pragma once
 // OTA manifest: strict key=value parsing.
 //   build=<uint32 nonzero>
+//   version=<1..24 chars of [0-9A-Za-z.\-_]>   (optional, for display)
 //   md5=<32 lowercase hex chars>   (optional)
 // Update iff manifest.build > runningBuild. Pure logic.
 #include <cstdint>
@@ -10,6 +11,7 @@ namespace spectra {
 
 struct OtaManifest {
   uint32_t build = 0;
+  std::string version;  // empty when the manifest has no version= line
   std::string md5;  // empty when absent
   bool hasMd5 = false;
 };

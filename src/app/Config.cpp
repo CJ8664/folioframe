@@ -6,6 +6,10 @@
 
 static const char* kNs = "spectra";
 static const char* kDevNs = "spectra_dev";
+// NOTE: these NVS namespace names are intentionally NOT renamed to FolioFrame.
+// Renaming them would orphan the stored Wi-Fi credentials, server URL, and
+// device pairing token on already-deployed devices, forcing a re-pair.
+// They are internal identifiers, never shown to the user.
 
 void Config::setDefaults() {
   memset(&settings_, 0, sizeof(settings_));
@@ -15,9 +19,13 @@ void Config::setDefaults() {
   settings_.quietStartMin = 22 * 60;  // 22:00
   settings_.quietEndMin = 7 * 60;     // 07:00
   strncpy(settings_.timezone, "auto", sizeof(settings_.timezone) - 1);
-  strncpy(settings_.deviceName, "spectraframe",
+  strncpy(settings_.deviceName, "folioframe",
           sizeof(settings_.deviceName) - 1);
   settings_.orientation = 0;
+  settings_.otaAutoInstall = true;  // silent auto-install is the default
+  settings_.otaUpdatePending = false;
+  settings_.otaPendingBuild = 0;
+  settings_.otaPendingVersion[0] = '\0';
 }
 
 void Config::resetDefaults() {
@@ -42,6 +50,13 @@ void Config::load() {
   settings_.orientation = p.getUChar("orient", settings_.orientation);
   p.getString("etag", settings_.etag, sizeof(settings_.etag));
   p.getString("otabase", settings_.otaBase, sizeof(settings_.otaBase));
+  settings_.otaAutoInstall = p.getBool("otaauto", settings_.otaAutoInstall);
+  settings_.otaUpdatePending =
+      p.getBool("otapend", settings_.otaUpdatePending);
+  settings_.otaPendingBuild =
+      p.getUInt("otapbld", settings_.otaPendingBuild);
+  p.getString("otapver", settings_.otaPendingVersion,
+              sizeof(settings_.otaPendingVersion));
   p.end();
 
   // Migration from the v1 URL-template firmware: the old "url" key held an
@@ -69,6 +84,10 @@ void Config::save() {
   p.putUChar("orient", settings_.orientation);
   p.putString("etag", settings_.etag);
   p.putString("otabase", settings_.otaBase);
+  p.putBool("otaauto", settings_.otaAutoInstall);
+  p.putBool("otapend", settings_.otaUpdatePending);
+  p.putUInt("otapbld", settings_.otaPendingBuild);
+  p.putString("otapver", settings_.otaPendingVersion);
   p.end();
 }
 

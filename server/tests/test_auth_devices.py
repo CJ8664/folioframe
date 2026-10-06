@@ -196,11 +196,18 @@ class TestDeviceRegistry(unittest.TestCase):
             self.reg.poll_claim("sf-001122334455", code)["status"], "pending")
 
     def test_token_delivered_exactly_once(self):
-        token = self._pair()
+        device = "sf-aabbccddeeff"
+        code = self.reg.register(device)["claim_code"]
+        self.reg.claim(device, code, "user-1")
+        token = self.reg.poll_claim(device, code)["device_token"]
         self.assertTrue(token)
-        # second poll: code is burned
+        # Same code inside the grace window: re-delivers the SAME token
+        # (covers a lost 200 response -- the device never got it).
+        again = self.reg.poll_claim(device, code)
+        self.assertEqual(again["device_token"], token)
+        # Wrong code never delivers, even inside the grace window.
         with self.assertRaises(BadClaim):
-            self.reg.poll_claim("sf-aabbccddeeff", "XXXX-XXXX")
+            self.reg.poll_claim(device, "XXXX-XXXX")
 
     def test_bad_device_id_rejected(self):
         with self.assertRaises(ValueError):
@@ -209,8 +216,15 @@ class TestDeviceRegistry(unittest.TestCase):
     def test_token_hash_never_stores_plaintext(self):
         token = self._pair()
         dev = self.reg._get("sf-aabbccddeeff")
-        self.assertNotIn(token, json.dumps(dev))
         self.assertEqual(dev["token_hash"], hash_token(token))
+        # The plaintext is stashed only for the re-delivery grace window;
+        # after it elapses the next poll wipes it.
+        dev["claim_delivered_at"] = time.time() - 3600
+        self.reg._put(dev)
+        with self.assertRaises(BadClaim):
+            self.reg.poll_claim("sf-aabbccddeeff", "XXXX-XXXX")
+        dev = self.reg._get("sf-aabbccddeeff")
+        self.assertNotIn(token, json.dumps(dev))
 
     def test_one_device_one_user(self):
         self._pair(user="user-1")

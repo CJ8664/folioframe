@@ -14,7 +14,7 @@ bool Portal::ensureWiFi() {
     wm_.addParameter(&serverParam_);
     serverParamAdded_ = true;
   }
-  String ap = "SF-Setup-" + board_->deviceId();
+  String ap = "FF-Setup-" + board_->deviceId();
   bool ok = wm_.autoConnect(ap.c_str());
   if (ok) saveServerUrlFromPortal();
   return ok;
@@ -62,12 +62,12 @@ String Portal::settingsPage() {
                     String(o >= 60 ? o / 60 : o) +
                     (o >= 60 ? " h" : " min") + "</option>";
   }
-  String h = "<html><body><h2>SpectraFrame settings</h2>"
+  String h = "<html><body><h2>FolioFrame settings</h2>"
              "<form method='POST' action='/save'>"
              "Server URL<br><input name='srv' size='60' value='" +
              String(s.serverUrl) +
              "' placeholder='https://frame.example.com'><br>"
-             "<small>Your SpectraFrame server. The frame pairs with it and "
+             "<small>Your FolioFrame server. The frame pairs with it and "
              "fetches images from it.</small><br><br>"
              "Refresh interval<br><select name='interval'>" +
              intervalOpts +
@@ -90,6 +90,12 @@ String Portal::settingsPage() {
              "OTA base URL (empty = use server)<br><input name='otabase' size='40' value='" +
              String(s.otaBase) +
              "'><br><br>"
+             "<input type='checkbox' name='otaauto' value='1'" +
+             (s.otaAutoInstall ? " checked" : "") +
+             "> Install firmware updates automatically<br>"
+             "<small>When on, the frame installs updates quietly on its own. "
+             "When off, it only lets you know an update is ready, and you "
+             "install it with the frame's buttons.</small><br><br>"
              "<input type='submit' value='Save'></form>"
              "<p><a href='/debug'>debug JSON</a></p>"
              "<p><form method='POST' action='/unpair' "
@@ -123,6 +129,7 @@ void Portal::handleSave() {
   s.orientation = (uint8_t)server_.arg("orient").toInt();
   strncpy(s.otaBase, server_.arg("otabase").c_str(), sizeof(s.otaBase) - 1);
   s.otaBase[sizeof(s.otaBase) - 1] = '\0';
+  s.otaAutoInstall = server_.hasArg("otaauto");
   String err;
   if (!Config::validate(s, err)) {
     server_.send(400, "text/plain", "Invalid: " + err);

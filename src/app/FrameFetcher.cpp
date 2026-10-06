@@ -50,6 +50,10 @@ FetchResult FrameFetcher::fetchFrame(const char* serverUrl, const char* token,
     http.addHeader("X-Battery-Pct", String(board_->batteryPercent()));
   }
   if (etag && etag[0]) http.addHeader("If-None-Match", etag);
+  // ETag is read after the transfer; without collectHeaders() the
+  // Arduino client discards it and every fetch repaints.
+  const char* headerKeys[] = {"ETag"};
+  http.collectHeaders(headerKeys, 1);
 
   int code = http.GET();
   if (code == 304) {

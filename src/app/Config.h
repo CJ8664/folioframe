@@ -20,6 +20,10 @@ struct Settings {
   uint8_t orientation;  // 0..3
   char etag[64];        // cached frame ETag for If-None-Match
   char otaBase[129];  // manual OTA base override; empty = use serverUrl
+  bool otaAutoInstall;      // true = check+install silently on wake (default)
+  bool otaUpdatePending;    // manual mode: update found, not yet installed
+  uint32_t otaPendingBuild;     // build number of the pending update
+  char otaPendingVersion[25];   // version string of pending update ("" if none)
 };
 
 class Config {

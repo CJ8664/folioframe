@@ -1,5 +1,5 @@
 #pragma once
-// Fetches a packed-4bpp frame from the paired SpectraFrame server with
+// Fetches a packed-4bpp frame from the paired FolioFrame server with
 // ETag caching. Owns one PSRAM buffer sized for the panel.
 //
 //   GET {serverUrl}/v1/device/frame   Authorization: Bearer <device token>

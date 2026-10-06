@@ -1,7 +1,7 @@
-// SpectraFrame v2 — EE02 + GDEB0709E01 7.09" Spectra 6.
+// FolioFrame v2 — EE02 + GDEB0709E01 7.09" Spectra 6.
 //
 // Wake → Wi-Fi → time → pair (first boot) → OTA → fetch → paint → sleep.
-// The frame never fetches images directly: it pairs with the SpectraFrame
+// The frame never fetches images directly: it pairs with the FolioFrame
 // server (claim code shown on the e-paper screen, typed into the web
 // console), then polls GET /v1/device/frame with its device Bearer token.
 // The server renders whatever source the user picked (Google Photos,
@@ -22,10 +22,11 @@
 #include "app/TimeSync.h"
 #include "hal/EE02Board.h"
 #include "hal/Gdeb0709e01Panel.h"
+#include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "4.3.0"
-#define FW_BUILD 17
+#define FW_VERSION "0.0.2"
+#define FW_BUILD 19
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -42,6 +43,14 @@ static Portal portal(&board, &config, &deviceClient);
 static PowerManager power(&board);
 static StatusScreen status(&panel);
 
+// OTA interaction state (fresh each boot; plain statics are fine).
+static bool g_otaCheckNow = false;  // long-press KEY2: check for update now
+static bool g_otaPrompt = false;    // short-press KEY2, manual mode, staged update
+static int g_wifiRssi = -100;       // set after Wi-Fi connects
+static uint8_t g_battPct = 0;       // 0 = unknown / no battery
+static bool g_onUsb = false;
+static uint8_t s_lastOtaPct = 255;
+
 static ButtonId wakeButton() {
   uint64_t pins = esp_sleep_get_ext1_wakeup_status();
   if (pins & (1ULL << EE02_KEY1_PIN)) return ButtonId::Btn1;
@@ -54,6 +63,144 @@ static void panic(const char* title, const char* detail) {
   status.showError(title, detail);
   panel.sleep();
   board.deepSleep((uint64_t)15 * 60 * 1000000ULL);  // retry in 15 min
+}
+
+// Human label for an update: "v0.0.3 (build 20)", or "build 20" when the
+// manifest carries no version string.
+static void otaLabelForManifest(const spectra::OtaManifest& m, char* out,
+                                size_t n) {
+  if (!m.version.empty())
+    snprintf(out, n, "v%s (build %u)", m.version.c_str(), m.build);
+  else
+    snprintf(out, n, "build %u", m.build);
+}
+
+static void otaLabelForPending(char* out, size_t n) {
+  const Settings& s = config.get();
+  if (s.otaPendingVersion[0])
+    snprintf(out, n, "v%s (build %u)", s.otaPendingVersion,
+             s.otaPendingBuild);
+  else
+    snprintf(out, n, "build %u", s.otaPendingBuild);
+}
+
+// A full e-paper refresh (~30 s) is far slower than the download, so the
+// on-screen bar moves in coarse steps; serial gets every percent.
+static void otaProgressCb(uint8_t pct) {
+  Serial.printf("OTA: %u%%\n", pct);
+  if (s_lastOtaPct == 255 || pct >= s_lastOtaPct + 25 || pct >= 100) {
+    s_lastOtaPct = pct;
+    status.showOtaProgress(pct);
+  }
+}
+
+// KEY2 = install, KEY1 = skip. The entry hold may still be down, so require
+// release first to avoid double-counting it as the confirmation press.
+static bool waitForOtaConfirm() {
+  uint32_t t0 = millis();
+  while (board.buttonHeld(ButtonId::Btn2) && millis() - t0 < 5000) delay(50);
+  t0 = millis();
+  while (millis() - t0 < 15000) {
+    switch (board.pollButton()) {
+      case ButtonId::Btn2:
+        return true;
+      case ButtonId::Btn1:
+        return false;
+      default:
+        break;
+    }
+    delay(50);
+  }
+  return false;  // timeout = skip, continue the normal cycle
+}
+
+// "Couldn't reach the update server." vs a quieter message when the server
+// simply publishes no update channel (HTTP 404 -> empty lastError).
+static const char* otaCheckError() {
+  return ota.lastError().length() ? ota.lastError().c_str()
+                                  : "Couldn't check for updates.";
+}
+
+// Download + verify + flash, then reboot. NVS (Wi-Fi, server URL, device
+// token) is untouched by the OTA partition swap, so the frame comes back
+// already paired -- never a re-pair after an update.
+static void installOtaUpdate(const char* otaServer, const char* otaToken,
+                             const spectra::OtaManifest* manifest) {
+  spectra::OtaManifest m;
+  if (!manifest) {
+    if (!ota.getManifest(otaServer, otaToken, m)) {
+      status.showOtaFailed(otaCheckError());
+      return;
+    }
+    if (!spectra::shouldUpdate(FW_BUILD, m)) {
+      status.showOtaUpToDate();
+      return;
+    }
+    manifest = &m;
+  }
+  if (!ota.batteryGatePassed()) {
+    status.showOtaBatteryLow();
+    return;
+  }
+  s_lastOtaPct = 255;
+  status.showOtaProgress(0);
+  if (ota.installFromManifest(otaServer, otaToken, *manifest, otaProgressCb)) {
+    // MD5 was verified inside the flash; show the state briefly before
+    // the reboot screen so the flow reads complete on-panel.
+    status.showOtaVerifying();
+    config.get().otaUpdatePending = false;  // installed: nothing staged
+    config.save();
+    status.showOtaDone();  // blocks for the e-paper refresh
+    Serial.println("OTA installed, rebooting");
+    ESP.restart();
+  } else {
+    status.showOtaFailed(ota.lastError().c_str());
+  }
+}
+
+// Interactive OTA entry points:
+//   check-now   = long-press KEY2: fresh manifest check, then prompt.
+//   prompt-only = manual mode with a staged update: straight to the prompt.
+// Installs reboot; anything else falls through to the normal cycle.
+static void runOtaInteractive(const char* otaServer, const char* otaToken,
+                              bool promptOnly) {
+  if (promptOnly) {
+    char label[48];
+    otaLabelForPending(label, sizeof(label));
+    status.showUpdatePrompt(label);
+    if (waitForOtaConfirm()) {
+      installOtaUpdate(otaServer, otaToken, nullptr);
+    } else {
+      // Dismissed: clear the staged flag. The next wake re-checks the
+      // manifest and re-stages if the update is still there.
+      config.get().otaUpdatePending = false;
+      config.save();
+      Serial.println("OTA: staged update dismissed");
+    }
+    return;
+  }
+  status.showOtaChecking();
+  if (!ota.batteryGatePassed()) {
+    status.showOtaBatteryLow();
+    return;
+  }
+  spectra::OtaManifest manifest;
+  if (!ota.getManifest(otaServer, otaToken, manifest)) {
+    status.showOtaFailed(otaCheckError());
+    return;
+  }
+  if (!spectra::shouldUpdate(FW_BUILD, manifest)) {
+    status.showOtaUpToDate();
+    return;
+  }
+  char label[48];
+  otaLabelForManifest(manifest, label, sizeof(label));
+  status.showOtaAvailable(label);
+  if (waitForOtaConfirm()) {
+    installOtaUpdate(otaServer, otaToken, &manifest);
+  } else {
+    Serial.println("OTA: skipped by user");
+  }
 }
 
 // Pairing: register with the server, show the claim code on the panel,
@@ -95,8 +242,18 @@ static String pairWithServer(const char* serverUrl) {
 void setup() {
   g_bootCount++;
   board.begin();
+  // Capture the KEY2 press timestamp as early as possible: the 2.5 s
+  // long-press hold is measured from the physical press (GPIO interrupt),
+  // not from whenever setup() gets around to checking after panel init.
+  // Falls back to the earliest post-boot observation when the press woke
+  // the chip from deep sleep (no ISR fires in sleep).
+  uint32_t btn2DownAt = 0;
+  if (board.buttonHeld(ButtonId::Btn2)) {
+    uint32_t ts = board.buttonPressMs(ButtonId::Btn2);
+    btn2DownAt = (ts != 0) ? ts : millis();
+  }
   Serial.begin(115200);
-  Serial.printf("SpectraFrame %s build %u boot %u\n", FW_VERSION, FW_BUILD,
+  Serial.printf("FolioFrame %s build %u boot %u\n", FW_VERSION, FW_BUILD,
                 g_bootCount);
 
   if (!psramFound()) panic("No PSRAM", "Enable PSRAM in Tools menu");
@@ -107,13 +264,38 @@ void setup() {
   WakeCause cause = board.wakeCause();
   Serial.printf("wake cause: %d\n", (int)cause);
 
+  // --- Battery (before any radio work) ---
+  g_onUsb = board.usbPowered();
+  if (!g_onUsb) {
+    g_battPct = board.batteryPercent();
+    if (g_battPct > 0 && g_battPct < 15) {
+      status.showCriticalBattery();
+      panel.sleep();
+      board.deepSleep((uint64_t)30 * 60 * 1000000ULL);  // retry in 30 min
+    } else if (g_battPct > 0 && g_battPct < 30) {
+      status.showLowBattery(g_battPct);  // warn, then continue normally
+    }
+  }
+
   // --- Button wakes ---
   if (cause == WakeCause::Button) {
     switch (wakeButton()) {
       case ButtonId::Btn1:
         break;  // handled below: enter portal
-      case ButtonId::Btn2:
-        break;  // force a fetch this cycle
+      case ButtonId::Btn2: {
+        // Long hold = check for a firmware update now. Short press while a
+        // manual update is staged = update prompt. Plain short press =
+        // fetch-now (existing behavior).
+        bool longPress = board.buttonHeld(ButtonId::Btn2) &&
+                         btn2DownAt != 0 && (millis() - btn2DownAt >= 2500);
+        if (longPress) {
+          g_otaCheckNow = true;
+        } else if (!config.get().otaAutoInstall &&
+                   config.get().otaUpdatePending) {
+          g_otaPrompt = true;
+        }
+        break;
+      }
       case ButtonId::Btn3:
         g_pinned = !g_pinned;
         Serial.printf("pinned=%d\n", g_pinned);
@@ -123,7 +305,7 @@ void setup() {
     }
     if (wakeButton() == ButtonId::Btn1) {
       if (!portal.hasWiFiCreds()) {
-        status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
+        status.showPortal(("FF-Setup-" + board.deviceId()).c_str(),
                           "http://192.168.4.1");
       }
       portal.ensureWiFi();
@@ -155,17 +337,24 @@ void setup() {
                 (int)hasCreds, (int)hasServer);
   if (!hasCreds || !hasServer) {
     Serial.println("netcheck: drawing setup screen");
-    status.showPortal(("SF-Setup-" + board.deviceId()).c_str(),
+    status.showPortal(("FF-Setup-" + board.deviceId()).c_str(),
                       "http://192.168.4.1");
     Serial.println("netcheck: setup screen done");
   } else {
     Serial.println("netcheck: skipping setup screen");
   }
-  if (!portal.ensureWiFi()) panic("Wi-Fi failed", "Check credentials");
+  if (!portal.ensureWiFi()) {
+    status.showWiFiLost();
+    panel.sleep();
+    board.deepSleep((uint64_t)15 * 60 * 1000000ULL);  // retry in 15 min
+  }
+  g_wifiRssi = WiFi.RSSI();
+  Serial.printf("wifi rssi: %d dBm\n", g_wifiRssi);
+  if (g_wifiRssi < -75) status.showWiFiWeak(g_wifiRssi);  // warn, continue
+  Settings& s = config.get();
+
   bool clockOk = timeSync.begin(config.get().timezone);
   if (!clockOk) Serial.println("WARN: clock not synced");
-
-  Settings& s = config.get();
 
   // --- Server URL: required before anything else. First boot (or a wipe)
   // drops into the settings portal so the user can type it. The portal
@@ -184,8 +373,13 @@ void setup() {
     }
   }
 
-  // Quiet hours: sleep through, don't fetch.
-  if (power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
+  // DeviceClient needs the server URL + firmware version for telemetry on
+  // every paired wake, not just inside the pairing flow.
+  deviceClient.begin(s.serverUrl, FW_VERSION);
+
+  // Quiet hours: sleep through, don't fetch. Fail open when the clock
+  // didn't sync: 1970 timestamps must never trigger a sleep-through.
+  if (clockOk && power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
     Serial.println("in quiet window, sleeping through");
     panel.sleep();
     power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
@@ -202,7 +396,7 @@ void setup() {
     config.setDeviceToken(token);
   }
 
-  // --- OTA (battery-gated inside OtaManager) ---
+  // --- OTA ---
   // Manual otaBase overrides the paired server (local dev); otherwise the
   // paired server serves version + binary, authenticated like frames.
   const char* otaServer = s.otaBase[0] ? s.otaBase : s.serverUrl;
@@ -210,25 +404,59 @@ void setup() {
   // Report telemetry first so the console shows this device's firmware
   // version even if the OTA or fetch below fails.
   deviceClient.sendStatus(token.c_str(), FW_BUILD);
-  if (ota.checkAndInstall(otaServer, otaToken, FW_BUILD)) {
-    Serial.println("OTA installed, rebooting");
-    ESP.restart();
+  if (g_otaCheckNow || g_otaPrompt) {
+    // Button-driven: an install reboots; anything else falls through to
+    // the normal fetch cycle.
+    runOtaInteractive(otaServer, otaToken, g_otaPrompt && !g_otaCheckNow);
+  } else if (s.otaAutoInstall) {
+    // Default: silent auto-install, no buttons needed.
+    if (ota.checkAndInstall(otaServer, otaToken, FW_BUILD)) {
+      config.get().otaUpdatePending = false;  // nothing staged anymore
+      config.save();
+      Serial.println("OTA installed, rebooting");
+      ESP.restart();
+    }
+  } else {
+    // Manual mode: check only. A newer build is staged in NVS (survives
+    // deep sleep) so a short KEY2 press can prompt for it; nothing is
+    // installed without the user.
+    spectra::OtaManifest manifest;
+    if (ota.getManifest(otaServer, otaToken, manifest) &&
+        spectra::shouldUpdate(FW_BUILD, manifest)) {
+      Settings& ms = config.get();
+      ms.otaUpdatePending = true;
+      ms.otaPendingBuild = manifest.build;
+      strncpy(ms.otaPendingVersion, manifest.version.c_str(),
+              sizeof(ms.otaPendingVersion) - 1);
+      ms.otaPendingVersion[sizeof(ms.otaPendingVersion) - 1] = '\0';
+      config.save();
+      Serial.printf("OTA: update staged: build %u\n", manifest.build);
+    }
   }
 
   // --- Fetch + paint ---
   board.blinkLed(2);  // proof-of-life during the long fetch
   switch (fetcher.fetchFrame(s.serverUrl, token.c_str(), FW_VERSION,
                              s.etag)) {
-    case FetchResult::Ok:
+    case FetchResult::Ok: {
+      // Composite the corner status badge (Wi-Fi, battery, update dot)
+      // into the frame buffer before the panel paint.
+      uint8_t badgeBatt = g_onUsb ? 100 : g_battPct;
+      PanelDims dims = panel.dims();
+      spectra::drawStatusBadge(const_cast<uint8_t*>(fetcher.data()),
+                               fetcher.len(), dims.width, dims.height,
+                               g_wifiRssi, badgeBatt,
+                               config.get().otaUpdatePending);
       if (panel.drawPacked4bpp(fetcher.data(), fetcher.len())) {
         strncpy(s.etag, fetcher.etag().c_str(), sizeof(s.etag) - 1);
         s.etag[sizeof(s.etag) - 1] = '\0';
         config.save();
         Serial.println("painted");
       } else {
-        status.showError("Paint failed", "Frame rejected by panel");
+        status.showRenderError("The frame rejected the image.");
       }
       break;
+    }
     case FetchResult::NotModified:
       Serial.println("304: image unchanged, keeping panel");
       break;

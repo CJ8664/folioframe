@@ -109,6 +109,7 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
   }
 
   epaper.setTextDatum(TL_DATUM);  // Reset to top-left
+  drawHelpQR();  // bottom-right help QR, same single refresh (no extra update)
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();
   epaper.update();
@@ -144,6 +145,24 @@ void Gdeb0709e01Panel::drawQRCode(const char* text, int x, int y, int size) {
   }
 }
 
+void Gdeb0709e01Panel::drawHelpQR() {
+  // Small help QR in the bottom-right corner of every non-photo status
+  // screen. Drawn into the same framebuffer before the single refresh.
+  static const char* kHelpUrl = "https://github.com/CJ8664/spectra-frame";
+  // Version-6 QR = 41 modules; drawQRCode() scales to fit the target size.
+  const int kTarget = 200;
+  const int kModules = 41;
+  const int kSize = kModules * (kTarget / kModules);  // 164 px
+  const int kMargin = 48;
+  const int x = 1200 - kSize - kMargin;
+  const int y = 1600 - kSize - kMargin;
+  drawQRCode(kHelpUrl, x, y, kTarget);
+  epaper.setTextDatum(MC_DATUM);
+  epaper.setTextColor(TFT_WHITE);
+  epaper.drawString("Scan for help", x + kSize / 2, y - 36, 2);
+  epaper.setTextDatum(TL_DATUM);
+}
+
 bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
                                    const char* url) {
   // SenseCraft-style setup screen: dark green background, large white text,
@@ -154,23 +173,33 @@ bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
   epaper.setTextColor(TFT_WHITE);
   epaper.setTextDatum(MC_DATUM);
 
-  // Title
-  int y = 200;
-  epaper.drawString(title, 600, y, 8);
-  y += 150;
+  // Title - split into two lines to fit width
+  int y = 180;
+  epaper.drawString("FolioFrame", 600, y, 8);
+  y += 140;
+  epaper.drawString("Setup", 600, y, 8);
+  y += 160;
 
-  // QR code (400px) centered, encoding the setup URL
-  int qrSize = 400;
-  int qrX = (1200 - qrSize) / 2;
-  drawQRCode(url, qrX, y, qrSize);
-  y += qrSize + 80;
+  // Two QR codes side by side: the setup portal URL and the GitHub
+  // help page (matches the reviewed mockups).
+  const int kQrTarget = 340;
+  const int kQrActual = 41 * (kQrTarget / 41);  // version-6 QR, 328 px
+  const int kQrGap = 80;
+  const int kLeftX = 600 - kQrActual - kQrGap / 2;
+  const int kRightX = 600 + kQrGap / 2;
+  drawQRCode(url, kLeftX, y, kQrTarget);
+  drawQRCode("https://github.com/CJ8664/spectra-frame", kRightX, y, kQrTarget);
+  y += kQrActual + 40;
+  epaper.drawString("Setup page", kLeftX + kQrActual / 2, y, 4);
+  epaper.drawString("Help & docs", kRightX + kQrActual / 2, y, 4);
+  y += 100;
 
-  // Instructions
+  // Instructions - use smaller font for AP name to fit
   epaper.drawString("1. Join Wi-Fi network:", 600, y, 6);
   y += 90;
-  epaper.drawString(apName, 600, y, 7);
-  y += 110;
-  epaper.drawString("2. Scan QR to open setup", 600, y, 6);
+  epaper.drawString(apName, 600, y, 4);
+  y += 100;
+  epaper.drawString("2. Scan the setup QR", 600, y, 6);
   y += 90;
   epaper.drawString("3. Enter Wi-Fi details", 600, y, 6);
 

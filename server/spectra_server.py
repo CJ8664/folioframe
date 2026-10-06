@@ -572,8 +572,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             return None
 
+    # Direct peers trusted to set X-Forwarded-For (reverse proxies /
+    # tunnels in front of this server). Without this, every client behind
+    # the Cloudflare Tunnel shares one peer IP and a single rate-limit
+    # bucket -- one bad actor could lock out pairing globally. Never trust
+    # XFF from an untrusted peer: it's trivially spoofable.
+    TRUSTED_PROXY_IPS = frozenset(
+        ip.strip()
+        for ip in os.environ.get("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",")
+        if ip.strip()
+    )
+
     def _client_ip(self):
-        return self.client_address[0]
+        peer = self.client_address[0]
+        if peer in self.TRUSTED_PROXY_IPS:
+            xff = self.headers.get("X-Forwarded-For")
+            if xff:
+                # Leftmost entry is the original client; proxies append
+                # to the right.
+                first = xff.split(",")[0].strip()
+                if first:
+                    return first
+        return peer
 
     def _human(self):
         """(session_id, session, user_sub) or (None, None, None)."""

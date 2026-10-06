@@ -1,5 +1,5 @@
 #pragma once
-// DeviceClient: speaks the SpectraFrame v2 device API against the paired
+// DeviceClient: speaks the FolioFrame v2 device API against the paired
 // server (the URL in Settings::serverUrl).
 //
 //   POST {server}/v1/device/register   {device_id,panel,fw} -> claim code

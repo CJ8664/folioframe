@@ -13,6 +13,7 @@ class Gdeb0709e01Panel : public Panel {
   bool drawPacked4bpp(const uint8_t* buf, size_t len) override;
   bool drawStatus(const char* title, const char* lines[], int numLines) override;
   bool drawSetupQR(const char* title, const char* apName, const char* url) override;
+  void drawHelpQR() override;
   void sleep() override;
 
  private:

@@ -26,13 +26,29 @@ bool beginClient(HTTPClient& http, WiFiClientSecure& secure, const String& url,
   return true;
 }
 
+String baseUrl(const char* serverUrl) {
+  String base = serverUrl;
+  while (base.endsWith("/")) base.remove(base.length() - 1);
+  return base;
+}
+
 }  // namespace
 
-bool OtaManager::fetchManifest(const char* url, const char* token,
-                               spectra::OtaManifest& manifest) {
+bool OtaManager::batteryGatePassed() {
+  // Battery gate: never flash on a low battery (brownout lesson).
+  // pct == 0 means no battery / invalid reading: USB-powered or unknown,
+  // which is safe to flash on.
+  uint8_t pct = board_->batteryPercent();
+  return pct == 0 || pct >= EE02_OTA_MIN_BATTERY_PCT;
+}
+
+bool OtaManager::getManifest(const char* serverUrl, const char* token,
+                             spectra::OtaManifest& manifest) {
+  lastError_ = "";
   HTTPClient http;
   WiFiClientSecure secure;
-  if (!beginClient(http, secure, String(url), token)) {
+  String versionUrl = baseUrl(serverUrl) + "/v1/device/ota/version";
+  if (!beginClient(http, secure, versionUrl, token)) {
     lastError_ = "version check failed";
     return false;
   }
@@ -53,7 +69,8 @@ bool OtaManager::fetchManifest(const char* url, const char* token,
 }
 
 bool OtaManager::flashFirmware(const char* url, const char* token,
-                               const spectra::OtaManifest& manifest) {
+                               const spectra::OtaManifest& manifest,
+                               OtaProgressCb progress) {
   HTTPClient http;
   WiFiClientSecure secure;
   if (!beginClient(http, secure, String(url), token)) {
@@ -85,9 +102,59 @@ bool OtaManager::flashFirmware(const char* url, const char* token,
     }
     Update.setMD5((const char*)md5);
   }
+  // Chunked write (instead of Update.writeStream) so the UI can report
+  // progress. Feeds the same Update MD5 context, so verification is
+  // identical.
   WiFiClient* s = http.getStreamPtr();
-  size_t written = Update.writeStream(*s);
+  static const size_t kChunk = 4096;
+  uint8_t* buf = (uint8_t*)malloc(kChunk);
+  if (!buf) {
+    lastError_ = "no RAM for OTA buffer";
+    Update.abort();
+    http.end();
+    return false;
+  }
+  size_t written = 0;
+  uint8_t lastPct = 0;
+  bool ok = true;
+  uint32_t stallStart = millis();
+  while (written < (size_t)total) {
+    int avail = s->available();
+    if (avail <= 0) {
+      if (millis() - stallStart > 30000) {
+        lastError_ = "firmware download stalled";
+        ok = false;
+        break;
+      }
+      delay(10);
+      continue;
+    }
+    stallStart = millis();
+    size_t toRead = (size_t)avail > kChunk ? kChunk : (size_t)avail;
+    int got = s->read(buf, toRead);
+    if (got <= 0) {
+      lastError_ = "firmware read failed";
+      ok = false;
+      break;
+    }
+    if (Update.write(buf, (size_t)got) != (size_t)got) {
+      lastError_ = "flash write failed";
+      ok = false;
+      break;
+    }
+    written += (size_t)got;
+    uint8_t pct = (uint8_t)((written * 100) / (size_t)total);
+    if (progress && pct != lastPct) {
+      lastPct = pct;
+      progress(pct);
+    }
+  }
+  free(buf);
   http.end();
+  if (!ok) {
+    Update.abort();
+    return false;
+  }
   if (written != (size_t)total || !Update.end(true)) {
     lastError_ = "flash failed: " + String(Update.errorString());
     return false;
@@ -95,28 +162,28 @@ bool OtaManager::flashFirmware(const char* url, const char* token,
   return true;
 }
 
+bool OtaManager::installFromManifest(const char* serverUrl, const char* token,
+                                     const spectra::OtaManifest& manifest,
+                                     OtaProgressCb progress) {
+  lastError_ = "";
+  String fwUrl = baseUrl(serverUrl) + "/v1/device/ota/firmware.bin";
+  return flashFirmware(fwUrl.c_str(), token, manifest, progress);
+}
+
 bool OtaManager::checkAndInstall(const char* serverUrl, const char* token,
                                  uint32_t currentBuild) {
   lastError_ = "";
 
-  // Battery gate: never flash on a low battery (brownout lesson).
-  uint8_t pct = board_->batteryPercent();
-  if (pct > 0 && pct < EE02_OTA_MIN_BATTERY_PCT) {
+  if (!batteryGatePassed()) {
     lastError_ = "battery too low for OTA";
     return false;
   }
 
-  String base = serverUrl;
-  while (base.endsWith("/")) base.remove(base.length() - 1);
-  String versionUrl = base + "/v1/device/ota/version";
-  String fwUrl = base + "/v1/device/ota/firmware.bin";
-
   spectra::OtaManifest manifest;
-  if (!fetchManifest(versionUrl.c_str(), token, manifest)) {
-    if (lastError_.isEmpty()) return false;  // 404: no channel, not an error
-    return false;
+  if (!getManifest(serverUrl, token, manifest)) {
+    return false;  // 404 (no channel) or a real error; lastError() tells
   }
   if (!spectra::shouldUpdate(currentBuild, manifest)) return false;
 
-  return flashFirmware(fwUrl.c_str(), token, manifest);
+  return installFromManifest(serverUrl, token, manifest, nullptr);
 }

@@ -22,6 +22,19 @@ class Board {
 
   // Poll debounced buttons. Returns the pressed button or ButtonId::None.
   virtual ButtonId pollButton() = 0;
+  // True while the given button is currently held down (raw pin read, no
+  // debounce). Used for hold-to-confirm gestures (e.g. hold KEY2 to check
+  // for a firmware update). Must be callable any time after begin().
+  virtual bool buttonHeld(ButtonId id) = 0;
+  // millis() timestamp of the last physical press of the button, or 0 if
+  // unknown (e.g. the press woke the chip from deep sleep, where GPIO
+  // interrupts are inactive). Lets hold gestures measure from the
+  // physical press instead of from whenever the firmware polls.
+  // Default: unsupported (0).
+  virtual uint32_t buttonPressMs(ButtonId id) {
+    (void)id;
+    return 0;
+  }
   // Arm EXT1 wake on any button before deepSleep().
   virtual void enableButtonWakeup() = 0;
 

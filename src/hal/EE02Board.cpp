@@ -9,14 +9,48 @@
 // 16-sample average, divider enabled only during the read.
 static const int kAdcSamples = 16;
 
+// Press timestamps from GPIO falling-edge interrupts (RTC-persisted so the
+// wake path can tell a stale pre-sleep timestamp from a fresh one).
+static RTC_DATA_ATTR uint32_t s_bootCount = 0;  // incremented every begin()
+static RTC_DATA_ATTR uint32_t s_pressBoot = 0;  // s_bootCount at last ISR press
+static RTC_DATA_ATTR uint32_t s_pressMs[3] = {0, 0, 0};
+static uint32_t s_thisBoot = 0;
+
+static void IRAM_ATTR keyIsr(void* arg) {
+  int idx = (int)(intptr_t)arg;
+  if (idx < 0 || idx > 2) return;
+  s_pressBoot = s_thisBoot;
+  s_pressMs[idx] = millis();  // ISR-safe on ESP32 (systimer read)
+}
+
+static int buttonIndex(ButtonId id) {
+  switch (id) {
+    case ButtonId::Btn1:
+      return 0;
+    case ButtonId::Btn2:
+      return 1;
+    case ButtonId::Btn3:
+      return 2;
+    default:
+      return -1;
+  }
+}
+
 BoardInfo EE02Board::info() const {
   return BoardInfo{"EE02", "gdeb0709e01"};
 }
 
 void EE02Board::begin() {
+  s_thisBoot = ++s_bootCount;
   pinMode(EE02_KEY1_PIN, INPUT_PULLUP);
   pinMode(EE02_KEY2_PIN, INPUT_PULLUP);
   pinMode(EE02_KEY3_PIN, INPUT_PULLUP);
+  // Falling-edge interrupts timestamp physical presses for hold gestures.
+  // (No ISR fires for the press that wakes from deep sleep -- EXT1 handles
+  // that -- so buttonPressMs() returns 0 in that case.)
+  attachInterruptArg(EE02_KEY1_PIN, keyIsr, (void*)(intptr_t)0, FALLING);
+  attachInterruptArg(EE02_KEY2_PIN, keyIsr, (void*)(intptr_t)1, FALLING);
+  attachInterruptArg(EE02_KEY3_PIN, keyIsr, (void*)(intptr_t)2, FALLING);
   pinMode(EE02_BAT_EN_PIN, OUTPUT);
   digitalWrite(EE02_BAT_EN_PIN, LOW);  // divider off except during reads
   if (EE02_STATUS_LED_PIN >= 0) {
@@ -32,8 +66,7 @@ ButtonId EE02Board::readButtonsRaw() {
   return ButtonId::None;
 }
 
-ButtonId EE02Board::pollButton() {
-  // Simple debounce: state must be stable across two 20 ms-apart polls.
+ButtonId EE02Board::pollButton() {  // Simple debounce: state must be stable across two 20 ms-apart polls.
   ButtonId raw = readButtonsRaw();
   uint32_t now = millis();
   if (raw != lastStable_ && (now - lastPollMs_) > 20) {
@@ -44,6 +77,26 @@ ButtonId EE02Board::pollButton() {
     if (prev == ButtonId::None && raw != ButtonId::None) return raw;
   }
   return ButtonId::None;
+}
+
+bool EE02Board::buttonHeld(ButtonId id) {
+  switch (id) {
+    case ButtonId::Btn1:
+      return digitalRead(EE02_KEY1_PIN) == LOW;
+    case ButtonId::Btn2:
+      return digitalRead(EE02_KEY2_PIN) == LOW;
+    case ButtonId::Btn3:
+      return digitalRead(EE02_KEY3_PIN) == LOW;
+    default:
+      return false;
+  }
+}
+
+uint32_t EE02Board::buttonPressMs(ButtonId id) {
+  int idx = buttonIndex(id);
+  if (idx < 0) return 0;
+  if (s_pressBoot != s_thisBoot) return 0;  // stale: pressed before this boot
+  return s_pressMs[idx];
 }
 
 void EE02Board::enableButtonWakeup() {
@@ -85,6 +138,10 @@ void EE02Board::setPanelPower(bool on) {
 }
 
 void EE02Board::deepSleep(uint64_t sleepUs) {
+  // Always arm button wakeup here, not just on the PowerManager path:
+  // panic(), critical-battery, and Wi-Fi-failure sleeps call deepSleep()
+  // directly and must still wake on a key press.
+  enableButtonWakeup();
   esp_sleep_enable_timer_wakeup(sleepUs);
   esp_deep_sleep_start();
 }
@@ -122,6 +179,10 @@ String EE02Board::deviceId() {
   // Must match the server's device-ID rule: "sf-" + 12 lowercase hex
   // digits (see PROTOCOL.md). Uppercase or a short ID is rejected with
   // "bad device_id" at register time.
+  // NOTE: the "sf-" prefix is intentionally NOT renamed to "ff-". It is the
+  // device's stable identity (MAC-derived): changing it would make the
+  // server treat this as a brand-new, unpaired device and force a re-pair.
+  // It is an internal identifier, not user-visible branding.
   uint64_t mac = ESP.getEfuseMac();
   char buf[16];
   snprintf(buf, sizeof(buf), "sf-%012llx",

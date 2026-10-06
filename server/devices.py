@@ -24,6 +24,10 @@ import time
 DEVICE_ID_RE = re.compile(r"^sf-[0-9a-f]{12}$")
 CLAIM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O/1/I/L
 CLAIM_TTL = 600  # seconds
+# Re-delivery grace: after the first poll_claim 200, the token stays
+# stashed this long so a device that never received the response can
+# re-poll and get the SAME token instead of losing it forever.
+CLAIM_GRACE = 120  # seconds
 RATE_LIMIT = 5          # attempts
 RATE_WINDOW = 60        # seconds
 
@@ -118,6 +122,7 @@ class DeviceRegistry:
         dev["claim_expires"] = int(time.time()) + CLAIM_TTL
         dev["claim_used"] = False
         dev.pop("pending_token", None)
+        dev.pop("claim_delivered_at", None)
         self._put(dev)
         return {"claim_code": dev["claim_code"],
                 "expires_in": CLAIM_TTL}
@@ -133,14 +138,42 @@ class DeviceRegistry:
         return hmac.compare_digest(pending, code.strip().upper())
 
     def poll_claim(self, device_id, code):
-        """Device polling. Returns dict; token delivered exactly once."""
+        """Device polling. The token is marked used on first delivery, but
+        stays stashed for CLAIM_GRACE seconds: if the 200 response never
+        reached the device, a re-poll with the SAME code re-delivers the
+        same token instead of losing it forever. A wrong code never
+        delivers; after the grace window the token is wiped."""
         dev = self._get(device_id)
         if not self._valid_claim_code(dev, code):
+            if dev:
+                pending = dev.get("pending_token")
+                delivered_at = dev.get("claim_delivered_at", 0)
+                in_grace = (pending is not None and
+                            time.time() - delivered_at < CLAIM_GRACE)
+                if in_grace:
+                    stashed = dev.get("claim_code")
+                    if stashed and hmac.compare_digest(
+                            stashed, code.strip().upper()):
+                        return {"status": "claimed",
+                                "device_token": pending,
+                                "device_id": device_id}
+                    # Wrong code inside the grace window: reject, but don't
+                    # wipe -- the real device can still re-poll correctly.
+                elif pending is not None or "claim_delivered_at" in dev:
+                    # Grace window elapsed: wipe the stashed token.
+                    dev.pop("pending_token", None)
+                    dev.pop("claim_delivered_at", None)
+                    dev["claim_code"] = None
+                    self._put(dev)
             raise BadClaim("no pending claim")
-        pending_token = dev.pop("pending_token", None)
+        pending_token = dev.get("pending_token")
         if pending_token:
+            if not dev.get("claim_delivered_at"):
+                dev["claim_delivered_at"] = time.time()
             dev["claim_used"] = True
-            dev["claim_code"] = None
+            # NOTE: claim_code is kept (not nulled) until the grace window
+            # ends so a re-poll can validate it; claim_used=True blocks any
+            # new claim with it.
             self._put(dev)
             return {"status": "claimed", "device_token": pending_token,
                     "device_id": device_id}
@@ -165,7 +198,8 @@ class DeviceRegistry:
         token = secrets.token_urlsafe(32)  # 256 bits
         dev["owner"] = user_sub
         dev["token_hash"] = hash_token(token)
-        dev["pending_token"] = token  # wiped on first successful poll_claim
+        dev["pending_token"] = token  # stashed for poll_claim; wiped after
+        dev.pop("claim_delivered_at", None)  # fresh claim, fresh grace window
         dev["paired_at"] = int(time.time())
         self._put(dev)
         return {"device_id": device_id, "name": dev.get("name", device_id)}

@@ -7,6 +7,9 @@ class EE02Board : public Board {
   void begin() override;
 
   ButtonId pollButton() override;
+  bool buttonHeld(ButtonId id) override;
+  // Interrupt timestamp of the last physical press (0 = unknown/stale).
+  uint32_t buttonPressMs(ButtonId id) override;
   void enableButtonWakeup() override;
 
   uint16_t batteryMilliVolts() override;

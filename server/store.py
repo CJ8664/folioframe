@@ -34,8 +34,23 @@ class JsonStore(Store):
         self.lock = threading.Lock()
         self.data = {"users": {}, "devices": {}, "sessions": {}}
         if os.path.exists(path):
-            with open(path) as f:
-                loaded = json.load(f)
+            try:
+                with open(path) as f:
+                    loaded = json.load(f)
+            except (ValueError, OSError) as e:
+                # Corrupt registry (truncated write, disk issue): quarantine
+                # it and start clean rather than crash-looping the server,
+                # which would brick pairing for every device.
+                backup = "%s.corrupt.%d" % (path, int(time.time()))
+                try:
+                    os.replace(path, backup)
+                except OSError:
+                    pass
+                print("WARNING: %s unreadable (%s); quarantined to %s, "
+                      "starting with empty state" % (path, e, backup))
+                loaded = {}
+            if not isinstance(loaded, dict):
+                loaded = {}
             for k in self.data:
                 if isinstance(loaded.get(k), dict):
                     self.data[k] = loaded[k]
