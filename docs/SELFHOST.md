@@ -35,7 +35,7 @@ Two options — the web editor is simplest (no git credentials needed):
 
 **Option 2 — Git repository:**
 1. **Stacks → Add stack** → **Repository** → URL
-   `https://github.com/CJ8664/spectra-frame`, compose path
+   `https://github.com/CJ8664/folioframe`, compose path
    `docker-compose.yml`. (Private repo: add your GitHub personal access
    token under Portainer's git credentials.)
 2. Add the `SPECTRA_CONFIG_JSON` environment variable as above.
@@ -49,7 +49,7 @@ config comes from the env var) and deploy again.
 ## Deploy via SSH
 
 ```bash
-git clone https://github.com/CJ8664/spectra-frame.git
+git clone https://github.com/CJ8664/folioframe.git
 cd spectra-frame
 cp server/config.json.example server/config.json
 # edit server/config.json:

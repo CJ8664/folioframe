@@ -148,7 +148,7 @@ void Gdeb0709e01Panel::drawQRCode(const char* text, int x, int y, int size) {
 void Gdeb0709e01Panel::drawHelpQR() {
   // Small help QR in the bottom-right corner of every non-photo status
   // screen. Drawn into the same framebuffer before the single refresh.
-  static const char* kHelpUrl = "https://github.com/CJ8664/spectra-frame";
+  static const char* kHelpUrl = "https://github.com/CJ8664/folioframe";
   // Version-6 QR = 41 modules; drawQRCode() scales to fit the target size.
   const int kTarget = 200;
   const int kModules = 41;
@@ -188,7 +188,7 @@ bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
   const int kLeftX = 600 - kQrActual - kQrGap / 2;
   const int kRightX = 600 + kQrGap / 2;
   drawQRCode(url, kLeftX, y, kQrTarget);
-  drawQRCode("https://github.com/CJ8664/spectra-frame", kRightX, y, kQrTarget);
+  drawQRCode("https://github.com/CJ8664/folioframe", kRightX, y, kQrTarget);
   y += kQrActual + 40;
   epaper.drawString("Setup page", kLeftX + kQrActual / 2, y, 4);
   epaper.drawString("Help & docs", kRightX + kQrActual / 2, y, 4);

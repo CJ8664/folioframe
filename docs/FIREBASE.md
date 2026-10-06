@@ -102,7 +102,7 @@ Same OIDC pattern as the pregnancy app — no service-account keys:
 1. In the GCP console: IAM → Workload Identity Federation → create a pool
    (e.g. `github-actions`) + provider for
    `https://token.actions.githubusercontent.com`, attribute condition
-   restricting to repo `CJ8664/spectra-frame`.
+   restricting to repo `CJ8664/folioframe`.
 2. Grant the pool's service account: Cloud Run Admin, Artifact Registry
    Writer, Firebase Hosting Admin.
 3. `.github/workflows/deploy.yml`: build the Docker image, push to Artifact
