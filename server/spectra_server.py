@@ -701,7 +701,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             parts = [(n if n != "firmware.bin" else fw_bin, o)
                      for n, o in FLASH_PARTS]
             self._json(200, {
-                "name": "SpectraFrame",
+                "name": "FolioFrame",
                 "version": ver,
                 "builds": [{
                     "chipFamily": "ESP32-S3",
@@ -1411,7 +1411,7 @@ PWA_HEAD = """
 <meta name='mobile-web-app-capable' content='yes'>
 <meta name='apple-mobile-web-app-capable' content='yes'>
 <meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>
-<meta name='apple-mobile-web-app-title' content='SpectraFrame'>
+<meta name='apple-mobile-web-app-title' content='FolioFrame'>
 <link rel='apple-touch-icon' href='/static/icon-180.png'>
 <link rel='icon' type='image/png' sizes='192x192' href='/static/icon-192.png'>
 """
