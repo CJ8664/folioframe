@@ -1458,6 +1458,32 @@ if('serviceWorker' in navigator){
 })();
 </script>
 """
+HINT_JS = """
+<script>
+/* "?" hint popovers (shared): one open at a time; delegated for dynamic content. */
+(function(){
+  function closeHints(){
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.hint[aria-expanded="true"]'), function(b){
+        b.setAttribute('aria-expanded','false');
+        var p=b.parentElement.querySelector('.hint-pop');
+        if(p) p.hidden=true;
+      });
+  }
+  document.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest?e.target.closest('.hint'):null;
+    if(!b){closeHints();return;}
+    e.stopPropagation();
+    var p=b.parentElement.querySelector('.hint-pop');
+    if(!p) return;
+    var willOpen=p.hidden;
+    closeHints();
+    p.hidden=!willOpen;
+    b.setAttribute('aria-expanded',String(willOpen));
+  });
+})();
+</script>
+"""
 
 
 def WELCOME_HTML():
@@ -1479,7 +1505,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <p class='tag'>Your memories, floating on glass.</p>
     <div id='gbtn'></div>
     <p id='err' class='err'></p>
-    <p class='fine'>Takes about 30 seconds. We never see your Google password.<br>
+    <p class='fine'>Takes about 30 seconds. We never see your Google password.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About sign-in'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Sign-in happens in Google’s own popup. FolioFrame only receives a basic profile token — never your password.</span></span><br>
     <span id='https-note' style='display:none'>Heads up: Google sign-in needs
     this page over HTTPS (or localhost).</span></p>
   </div>
@@ -1500,12 +1526,12 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   <div class='card installbar' id='installcard'>
     <div style='flex:1'><b>Install FolioFrame</b><br>
     <span class='muted'>Add it to your home screen for the full app feel.</span></div>
-    <button class='btn sm' id='installbtn' style='display:none'>Install app</button>
+    <button class='btn sm' id='installbtn' style='display:none'>Install app</button><span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About installing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Adds the FolioFrame console to your home screen so it opens like a native app.</span></span>
   </div>
   <div class='card' style='text-align:center'>
     <span class='muted'>Setting up a new frame?</span><br>
     <a class='btn ghost sm' href='/flash' style='margin-top:8px'>Flash firmware over USB</a>
-    <p class='fine'>No login needed — flash here, then point the frame at any server.</p>
+    <p class='fine'>No login needed — install the firmware here first, then set up the frame as usual.</p>
   </div>
 </main>
 <script>
@@ -1547,7 +1573,7 @@ window.addEventListener('load',function(){
   }).catch(()=>showError('Could not reach the server. Please try again.'));
 });
 </script>
-""" + SW_REGISTER + """</body></html>"""
+""" + HINT_JS + SW_REGISTER + """</body></html>"""
 
 
 def PHOTOS_HTML():
@@ -1841,12 +1867,12 @@ esp-web-install-button{--esp-tools-button-color:var(--accent);
     <a class='btn ghost sm' href='/'>Home</a>
   </div></div>
   <div class='card hero'>
-    <h1>Flash the frame</h1>
+    <h1>Flash the frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About flashing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Installs FolioFrame firmware on the EE02 driver board over USB, right from this page. No login needed.</span></span></h1>
     <p class='tag'>Install FolioFrame firmware over USB, right from
     this page. No login needed.</p>
   </div>""" + body + """
 </main>
-""" + SW_REGISTER + """</body></html>""")
+""" + HINT_JS + SW_REGISTER + """</body></html>""")
 
 
 CONSOLE_HTML = """<html><head><meta name='viewport'
@@ -1869,12 +1895,12 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 </div></header>
 <main class='sheet sheet-wide'>
   <div class='card' id='photos-card'>
-    <h2>Google Photos</h2>
+    <h2>Google Photos<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About Google Photos'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Your frame’s photo library. Connect once, then pick the photos you love.</span></span></h2>
     <p class='sub' id='photos-sub'>Your frame's photo library.</p>
     <div id='photos'><p class='muted'>Loading&hellip;</p></div>
   </div>
   <div class='card'>
-    <h2>Photo source</h2>
+    <h2>Photo source<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About photo source'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>What your frames show right now. Switch sources anytime — frames pick it up at their next wake.</span></span></h2>
     <p class='sub'>What your frames show right now.</p>
     <div class='seg' id='src' role='tablist' aria-label='Photo source'></div>
     <div class='btnrow'>
@@ -2015,9 +2041,9 @@ async function renderDevices(){
     return `
     <div class='dev'>
       <span class='nm'>${esc(dev.name||'Frame')}</span><br>
-      <span class='meta'>${esc(dev.device_id)}</span><br>
+      <span class='meta'>${esc(dev.device_id)}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the device ID'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>The frame’s unique ID, also shown on its setup screen.</span></span></span><br>
       <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
-      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}${fwBadge}</span>
+      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}${fwBadge}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About frame status'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>When the frame last checked in, its battery level, and the installed firmware version.</span></span></span>
       ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
       <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
@@ -2065,12 +2091,12 @@ async function renameDev(id){
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}
 init();
 </script>
-""" + SW_REGISTER + """</body></html>"""
+""" + HINT_JS + SW_REGISTER + """</body></html>"""
 
 
 CLAIM_HTML = """<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
-<title>Pair a frame &middot; SpectraFrame</title>
+<title>Pair a frame &middot; FolioFrame</title>
 """ + PWA_HEAD + THEME_CSS + """
 form .btn{width:100%;margin-top:14px}
 </style>
@@ -2081,7 +2107,7 @@ form .btn{width:100%;margin-top:14px}
   <div class='card' style='text-align:center;margin-top:8vh'>
     <img src='/static/icon-192.png' alt='' style='width:64px;height:64px;border-radius:18px'>
     <h2 style='margin-top:12px'>Pair a frame</h2>
-    <p class='sub'>Enter the 8-character code shown on the frame's screen.</p>
+    <p class='sub'>Enter the 8-character code shown on the frame's screen.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the pairing code'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>The code appears on the frame’s screen after it connects to Wi-Fi. It expires after a few minutes.</span></span></p>
     <form onsubmit='return pair(event)'>
       <input id='code' class='code' placeholder='XXXX-XXXX' autocomplete='off'
         autocapitalize='characters' maxlength='9' aria-label='Pairing code'>
@@ -2105,7 +2131,7 @@ async function pair(e){
   return false;
 }
 </script>
-""" + SW_REGISTER + """</body></html>"""
+""" + HINT_JS + SW_REGISTER + """</body></html>"""
 
 
 def main():
