@@ -182,6 +182,11 @@ img { max-width: 100%; }
   padding: 42px 24px 56px;
 }
 
+/* Wide variant: content pages use the available desktop width. */
+.sheet-wide {
+  max-width: 1180px;
+}
+
 /* ---------- 5. Frosted-glass primitives ------------------------------------- */
 
 .glass {

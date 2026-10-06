@@ -1472,7 +1472,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 </head><body>
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
 <div class='blob b3'></div></div>
-<main class='sheet'>
+<main class='sheet sheet-wide'>
   <div class='card hero'>
     <img src='/static/icon-192.png' alt='FolioFrame'>
     <h1>FolioFrame</h1>
@@ -1573,7 +1573,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
     aria-label='Toggle theme'>&#x1F315;</button>
 </div></header>
-<main class='sheet'>
+<main class='sheet sheet-wide'>
   <div class='card'>
     <div class='photo-section-head'>
       <h2>Your photos</h2>
@@ -1832,7 +1832,7 @@ esp-web-install-button{--esp-tools-button-color:var(--accent);
 </head><body>
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
 <div class='blob b3'></div></div>
-<main class='sheet'>
+<main class='sheet sheet-wide'>
   <div class='topbar'><div class='topbar-in'>
     <span class='brand'><img src='/static/icon-192.png' alt=''>FolioFrame</span>
     <span class='sp'></span>
@@ -1867,7 +1867,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   <button class='iconbtn' onclick='logout()' title='Sign out'
     aria-label='Sign out'>&#x23FB;</button>
 </div></header>
-<main class='sheet'>
+<main class='sheet sheet-wide'>
   <div class='card' id='photos-card'>
     <h2>Google Photos</h2>
     <p class='sub' id='photos-sub'>Your frame's photo library.</p>
