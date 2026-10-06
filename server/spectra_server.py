@@ -10,6 +10,12 @@ Implements PROTOCOL.md v2.1:
   Human (signed-in session; Google sign-in with the service's OAuth
   client -- the admin configures it once in "google"):
     GET  /claim                         pair-a-device page
+    GET  /photos                        photo picker (thumbnails, e-ink
+                                       preview, 3:4 editor)
+    GET  /api/photos                    my photo library [{id, name}]
+    GET  /api/photos/{id}/thumb         360px JPEG thumbnail
+    GET  /api/photos/{id}/full          full-size JPEG
+    POST /api/photos/{id}/edit          raw JPEG body -> replace cached photo
     GET  /api/session, /api/account     session info + account
     GET  /api/devices                   my devices
     POST /api/devices/claim             {code} claim a device to my account
@@ -674,6 +680,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return dev_id, rest[len(dev_id):]
         return None, None
 
+    def _photo_id_from_path(self, prefix, sub):
+        """(item_id, rest) for /api/photos/<id>/... paths, else (None, None).
+
+        The id must be one of the user's own cached photo ids -- never a
+        raw path -- so this rejects traversal and cross-user guessing
+        alike.
+        """
+        p = urllib.parse.urlparse(self.path).path
+        if not p.startswith(prefix):
+            return None, None
+        rest = p[len(prefix):]
+        raw_id = rest.split("/")[0]
+        item_id = urllib.parse.unquote(raw_id)
+        try:
+            ids = set(APP.photos_for(sub).source._ids())
+        except Exception:
+            return None, None
+        if not item_id or item_id not in ids:
+            return None, None
+        return item_id, rest[len(raw_id):]
+
+    def _photo_bytes(self, sub, item_id, thumb=False):
+        """Load a cached photo; thumbnail or full-size JPEG bytes."""
+        src = APP.photos_for(sub).source
+        img = src.load(item_id)
+        if thumb:
+            img.thumbnail((360, 480), Image.LANCZOS)
+            q = 82
+        else:
+            q = 92
+        buf = BytesIO()
+        img.save(buf, "JPEG", quality=q)
+        return buf.getvalue()
+
     def _set_session_cookie(self, session_id):
         val = APP.auth.cookie_value(session_id)
         return {"Set-Cookie":
@@ -866,6 +906,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "devices": devs,
                              "latest_fw": APP.fw_version(),
                              "latest_build": int(APP.build)})
+            return
+
+        if p == "/photos":
+            # Photo picker page (thumbnail grid, e-ink preview, editor).
+            if not self._human()[1]:
+                self._redirect("/")
+                return
+            self._send(200, "text/html", PHOTOS_HTML().encode(),
+                       {"Cache-Control": "no-store"})
+            return
+
+        if p == "/api/photos":
+            got = self._require_human()
+            if not got:
+                return
+            _, _, sub = got
+            try:
+                ids = APP.photos_for(sub).source._ids()
+            except Exception:
+                ids = []
+            self._json(200, {"ok": True,
+                             "photos": [{"id": i, "name": i} for i in ids]})
+            return
+
+        if p.startswith("/api/photos/"):
+            got = self._require_human()
+            if not got:
+                return
+            _, _, sub = got
+            item_id, rest = self._photo_id_from_path("/api/photos/", sub)
+            if item_id and rest == "/thumb":
+                try:
+                    data = self._photo_bytes(sub, item_id, thumb=True)
+                except Exception:
+                    self._json(404, {"ok": False, "error": "not found"})
+                    return
+                self._send(200, "image/jpeg", data,
+                           {"Cache-Control": "private, max-age=3600"})
+                return
+            if item_id and rest == "/full":
+                try:
+                    data = self._photo_bytes(sub, item_id)
+                except Exception:
+                    self._json(404, {"ok": False, "error": "not found"})
+                    return
+                self._send(200, "image/jpeg", data,
+                           {"Cache-Control": "private, max-age=3600"})
+                return
+            self._json(404, {"ok": False, "error": "not found"})
             return
 
         dev_id, rest = self._device_id_from_path("/api/devices/")
@@ -1181,6 +1270,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
 
+        if p.startswith("/api/photos/") and p.endswith("/edit"):
+            # Save an edited photo (photo picker "Apply"): replaces the
+            # cached photo so the frame picks the edited version up on its
+            # next rotation. Body is a raw JPEG (canvas.toBlob), CSRF via
+            # the X-CSRF-Token header.
+            got = self._require_human()
+            if not got or not self._require_csrf(got[1]):
+                return
+            _, _, sub = got
+            item_id, rest = self._photo_id_from_path("/api/photos/", sub)
+            if not item_id or rest != "/edit":
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                length = -1
+            if length <= 0 or length > 15 * 1024 * 1024:
+                self._json(400, {"ok": False, "error": "bad upload size"})
+                return
+            raw = self.rfile.read(length)
+            try:
+                # Validates the bytes are a real image (and caps decoded
+                # pixels via pipeline.MAX_IMAGE_PIXELS); EXIF-normalizes.
+                img = pipeline.load_image(raw)
+            except Exception:
+                self._json(400, {"ok": False, "error": "not an image"})
+                return
+            buf = BytesIO()
+            img.save(buf, "JPEG", quality=92)
+            try:
+                APP.photos_for(sub).source.save(item_id, buf.getvalue())
+            except Exception:
+                self._json(500, {"ok": False, "error": "save failed"})
+                return
+            self._json(200, {"ok": True})
+            return
+
         if p == "/api/next":
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
@@ -1423,6 +1550,116 @@ window.addEventListener('load',function(){
 """ + SW_REGISTER + """</body></html>"""
 
 
+def PHOTOS_HTML():
+    """Photo picker page: thumbnail grid, e-ink preview panel, 3:4 editor.
+
+    Thumbnails come from /api/photos (the user's Google Photos cache);
+    clicking one opens the preview (original + simulated six-color e-ink);
+    the editor's Apply POSTs the rendered 1200x1600 JPEG to
+    /api/photos/<id>/edit, replacing the cached photo.
+    """
+    return """<html><head><meta name='viewport'
+content='width=device-width,initial-scale=1,viewport-fit=cover'>
+<title>Photos - FolioFrame</title>
+""" + PWA_HEAD + THEME_CSS + """
+</head><body>
+<div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
+<div class='blob b3'></div></div>
+<header class='topbar'><div class='topbar-in'>
+  <a class='brand' href='/' style='text-decoration:none;color:inherit'><img src='/static/icon-192.png' alt=''>FolioFrame</a>
+  <a class='navlink' href='/'>Console</a>
+  <span class='navlink' aria-current='page'>Photos</span>
+  <span class='sp'></span>
+  <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
+    aria-label='Toggle theme'>&#x1F315;</button>
+</div></header>
+<main class='sheet'>
+  <div class='card'>
+    <div class='photo-section-head'>
+      <h2>Your photos</h2>
+      <span id='photoCount'></span>
+    </div>
+    <p class='sub'>Tap a photo to preview it on simulated e-ink, or edit it for your frame.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the photo picker'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>These are the photos your frames draw from. Edits replace the photo here, so the frame picks up the edited version on its next rotation.</span></span></p>
+    <div class='photo-grid' id='photoGrid' aria-label='Your photos'></div>
+    <p class='photo-empty' id='photoEmpty' hidden></p>
+  </div>
+</main>
+<div class='preview-shell' id='previewShell' aria-hidden='true'>
+  <aside class='preview-panel' role='dialog' aria-modal='true' aria-labelledby='previewTitle'>
+    <div class='preview-top'>
+      <div><h2 id='previewTitle'>Frame preview</h2><p id='previewName'>Selected photo</p></div>
+      <div class='preview-actions'>
+        <button class='btn ghost sm' id='previewEdit' type='button'>Edit photo</button>
+        <button class='iconbtn preview-close' id='previewClose' type='button' aria-label='Close preview'>&times;</button>
+      </div>
+    </div>
+    <div class='preview-grid'>
+      <figure class='preview-figure'>
+        <figcaption class='preview-label'>Original <span>Source colors</span></figcaption>
+        <div class='preview-media'><img id='previewOriginal' src='' alt='Original selected photo'></div>
+      </figure>
+      <figure class='preview-figure'>
+        <figcaption class='preview-label'><span class='preview-label-main'>E-ink preview &mdash; simulated<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the simulated e-ink preview'>?</button><span class='hint-pop hint-pop--below' role='note' hidden>An approximation of how this photo will look on the frame's six-color e-paper display. Real e-paper shows softer colors and less fine detail than your phone or computer screen.</span></span></span><span>1200 &times; 1600 fit</span></figcaption>
+        <div class='preview-media'>
+          <canvas id='einkCanvas' width='360' height='480' aria-label='Simulated six-color e-ink rendering'></canvas>
+          <div class='render-state' id='renderState' role='status' aria-live='polite'>Rendering preview&hellip;</div>
+        </div>
+      </figure>
+    </div>
+    <p class='preview-credit'>Preview only &mdash; a close approximation of the frame's six-color e-paper display.</p>
+  </aside>
+</div>
+<div class='editor-shell' id='editorShell' aria-hidden='true'>
+  <section class='editor-panel' role='dialog' aria-modal='true' aria-labelledby='editorTitle'>
+    <div class='editor-head'>
+      <div><h2 id='editorTitle'>Edit for your frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About editing photos for your frame'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>A final framing pass before a photo reaches your frame. Drag to reposition, use the sliders for zoom, brightness, and contrast, and rotate in 90&deg; steps &mdash; the 3:4 crop itself never changes, so the frame always fills edge to edge.</span></span></h2><p id='editorName'>Selected photo</p></div>
+      <button class='iconbtn' id='editorClose' type='button' aria-label='Cancel and close editor'>&times;</button>
+    </div>
+    <div class='editor-layout'>
+      <div>
+        <div class='crop-stage' id='cropStage' aria-label='3 by 4 crop preview. Drag to reposition the photo.'>
+          <canvas class='editor-canvas' id='editorCanvas' width='360' height='480' tabindex='0'></canvas>
+          <div class='crop-frame' aria-hidden='true'><span class='frame-cols'></span></div>
+          <span class='full-bleed-badge'>3:4 &middot; fills the whole frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About filling the whole frame'>?</button><span class='hint-pop hint-pop--left' role='note' hidden>The frame's screen is 3:4, so your photo always fills it edge to edge &mdash; no black bars. Drag or zoom to reframe; the crop shape itself stays fixed.</span></span></span>
+        </div>
+      </div>
+      <div class='editor-controls'>
+        <p class='editor-help'>Drag the photo to reposition it. Zoom with the slider, mouse wheel, or a two-finger pinch. The crop stays fully covered automatically.</p>
+        <div class='control-row'>
+          <label for='zoomRange'>Zoom</label>
+          <input class='editor-range' id='zoomRange' type='range' min='100' max='300' value='100' step='1'>
+          <output class='control-value' id='zoomValue' for='zoomRange'>100%</output>
+        </div>
+        <div class='control-row'>
+          <label for='brightnessRange'>Brightness</label>
+          <input class='editor-range' id='brightnessRange' type='range' min='70' max='130' value='100' step='1'>
+          <output class='control-value' id='brightnessValue' for='brightnessRange'>100%</output>
+        </div>
+        <div class='control-row'>
+          <label for='contrastRange'>Contrast</label>
+          <input class='editor-range' id='contrastRange' type='range' min='70' max='130' value='100' step='1'>
+          <output class='control-value' id='contrastValue' for='contrastRange'>100%</output>
+        </div>
+        <div class='adjustment-reset-row'>
+          <button class='btn ghost sm' id='resetAdjustments' type='button'>Reset brightness &amp; contrast</button>
+        </div>
+        <div class='rotate-row'>
+          <button class='btn ghost sm' id='rotateButton' type='button' aria-label='Rotate photo 90 degrees clockwise'>&#x21BB; Rotate 90&deg;</button>
+          <span id='rotationValue'>0&deg;</span>
+        </div>
+      </div>
+    </div>
+    <div class='editor-actions'>
+      <button class='btn ghost' id='editorCancel' type='button'>Cancel</button>
+      <button class='btn' id='editorApply' type='button'>Apply edit</button>
+    </div>
+    <p class='editor-status' id='editorStatus' role='status'></p>
+  </section>
+</div>
+<script src='/static/photos.js'></script>
+""" + SW_REGISTER + """</body></html>"""
+
+
 def _flash_page(available, version, versions):
     """Public firmware-flash page (no login): Web Serial via esp-web-tools.
 
@@ -1621,6 +1858,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <div class='blob b3'></div></div>
 <header class='topbar'><div class='topbar-in'>
   <span class='brand'><img src='/static/icon-192.png' alt=''>FolioFrame</span>
+  <a class='navlink' href='/photos'>Photos</a>
   <span class='sp'></span>
   <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
     aria-label='Toggle theme'>&#x1F315;</button>

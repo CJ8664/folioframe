@@ -307,7 +307,9 @@ class GooglePhotosSource(Source):
         # Server injects a BlobStore here for Cloud Run deployments where
         # local disk is ephemeral; otherwise the plain cache dir is used.
         self.blob_store = cfg.get("blob_store")
-        self.blob_prefix = "gphotos/"
+        # Honor the caller's prefix (the per-user "users/{sub}/gphotos/"
+        # the pick flow writes to); default keeps local/test behavior.
+        self.blob_prefix = cfg.get("blob_prefix", "gphotos/")
         self.cache_dir = cfg.get("cache_dir", default_cache_dir())
         if self.blob_store is None:
             os.makedirs(self.cache_dir, exist_ok=True)
@@ -337,6 +339,17 @@ class GooglePhotosSource(Source):
                 return img.convert("RGB")
         img.load()
         return img.convert("RGB")
+
+    def save(self, item_id, data):
+        """Replace a cached photo's bytes (e.g. after a user edit in the
+        photo picker). Writes to the same location load() reads from, so
+        the frame picks the edited photo up on its next rotation."""
+        if self.blob_store is not None:
+            self.blob_store.put(self.blob_prefix + item_id, data,
+                                "image/jpeg")
+        else:
+            with open(os.path.join(self.cache_dir, item_id), "wb") as f:
+                f.write(data)
 
     def describe(self):
         d = super().describe()

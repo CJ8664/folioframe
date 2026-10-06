@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from io import BytesIO
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -871,6 +872,179 @@ class TestHTTP(unittest.TestCase):
     def test_legacy_anonymous_frame_is_gone(self):
         status, _, _ = self.req("GET", "/frame")
         self.assertEqual(status, 404)
+
+
+class TestPhotoPicker(unittest.TestCase):
+    """Photo picker page + /api/photos endpoints (thumbnails, editor save)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cfg_path = os.path.join(cls.tmp, "config.json")
+        with open(cfg_path, "w") as f:
+            json.dump({"port": 0, "source": "picsum",
+                       "auth": {"allowlist": []},
+                       "google": {"client_id": CLIENT_ID,
+                                  "client_secret": "test-secret"}}, f)
+        spectra_server.APP = spectra_server.Server(
+            config_path=cfg_path,
+            state_path=os.path.join(cls.tmp, "state.json"),
+            data_dir=os.path.join(cls.tmp, "data"))
+        spectra_server.APP.auth._verify = fake_verifier_factory(
+            {"good-token": GOOD_CLAIMS, "good-token-2": GOOD_CLAIMS_2})
+        cls.srv = spectra_server.http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0), spectra_server.Handler)
+        cls.port = cls.srv.server_address[1]
+        cls.thread = threading.Thread(target=cls.srv.serve_forever,
+                                      daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        cls.thread.join(timeout=5)
+
+    def req(self, method, path, body=None, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port,
+                                          timeout=10)
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        data = resp.read()
+        hdrs = dict(resp.getheaders())
+        conn.close()
+        return resp.status, hdrs, data
+
+    def login_as(self, token="good-token"):
+        status, hdrs, data = self.req(
+            "POST", "/api/auth/token",
+            body=json.dumps({"id_token": token}),
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 200, data[:200])
+        j = json.loads(data)
+        cookie = hdrs["Set-Cookie"].split(";")[0]
+        return cookie, j["csrf"]
+
+    def seed_photo(self, sub="google-sub-1", name="picker-test.jpg",
+                   color=(200, 30, 30)):
+        buf = BytesIO()
+        Image.new("RGB", (800, 600), color).save(buf, "JPEG", quality=90)
+        spectra_server.APP.photos_for(sub).source.save(name, buf.getvalue())
+        return name
+
+    def test_photos_page_gated(self):
+        status, hdrs, _ = self.req("GET", "/photos")
+        self.assertEqual(status, 302)
+        self.assertEqual(hdrs["Location"], "/")
+        cookie, _ = self.login_as()
+        status, _, data = self.req("GET", "/photos",
+                                   headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        body = data.decode()
+        self.assertIn("<title>Photos - FolioFrame</title>", body)
+        self.assertIn("/static/folioframe.css", body)
+        self.assertIn("/static/photos.js", body)
+        self.assertIn("id='photoGrid'", body)
+        self.assertIn("id='einkCanvas'", body)
+        self.assertIn("id='editorCanvas'", body)
+
+    def test_console_links_photos(self):
+        cookie, _ = self.login_as()
+        status, _, data = self.req("GET", "/",
+                                   headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertIn("href='/photos'", data.decode())
+
+    def test_photo_api_auth(self):
+        status, _, _ = self.req("GET", "/api/photos")
+        self.assertEqual(status, 401)
+        status, _, _ = self.req("GET", "/api/photos/x/thumb")
+        self.assertEqual(status, 401)
+
+    def test_photo_list_and_thumbs(self):
+        pid = self.seed_photo()
+        spaced = self.seed_photo(name="my photo.jpg")
+        cookie, _ = self.login_as()
+        h = {"Cookie": cookie}
+        status, _, data = self.req("GET", "/api/photos", headers=h)
+        self.assertEqual(status, 200)
+        j = json.loads(data)
+        self.assertTrue(j["ok"])
+        self.assertIn(pid, [p["id"] for p in j["photos"]])
+        self.assertIn(spaced, [p["id"] for p in j["photos"]])
+        status, hdrs, data = self.req(
+            "GET", "/api/photos/" + pid + "/thumb", headers=h)
+        self.assertEqual(status, 200)
+        self.assertIn("image/jpeg", hdrs.get("Content-Type", ""))
+        self.assertTrue(data.startswith(b"\xff\xd8\xff"))
+        thumb_len = len(data)
+        # Filenames with spaces arrive URL-encoded and still resolve.
+        status, _, data = self.req(
+            "GET", "/api/photos/my%20photo.jpg/thumb", headers=h)
+        self.assertEqual(status, 200)
+        self.assertTrue(data.startswith(b"\xff\xd8\xff"))
+        status, _, data = self.req(
+            "GET", "/api/photos/" + pid + "/full", headers=h)
+        self.assertEqual(status, 200)
+        self.assertTrue(data.startswith(b"\xff\xd8\xff"))
+        self.assertGreater(len(data), thumb_len)
+        # Unknown id and traversal attempts are 404, not 500.
+        status, _, _ = self.req("GET", "/api/photos/nope.jpg/thumb",
+                                headers=h)
+        self.assertEqual(status, 404)
+        status, _, _ = self.req("GET", "/api/photos/../x/thumb", headers=h)
+        self.assertEqual(status, 404)
+
+    def test_photo_libraries_are_per_user(self):
+        self.seed_photo(sub="google-sub-1", name="mine.jpg")
+        cookie2, _ = self.login_as("good-token-2")
+        status, _, data = self.req("GET", "/api/photos",
+                                   headers={"Cookie": cookie2})
+        j = json.loads(data)
+        self.assertEqual(j["photos"], [])
+        status, _, _ = self.req("GET", "/api/photos/mine.jpg/full",
+                                headers={"Cookie": cookie2})
+        self.assertEqual(status, 404)
+
+    def test_edit_replaces_cached_photo(self):
+        pid = self.seed_photo(color=(200, 30, 30))
+        cookie, csrf = self.login_as()
+        h = {"Cookie": cookie, "X-CSRF-Token": csrf,
+             "Content-Type": "image/jpeg"}
+        # No CSRF -> 403.
+        status, _, _ = self.req(
+            "POST", "/api/photos/" + pid + "/edit", body=b"xx",
+            headers={"Cookie": cookie,
+                     "Content-Type": "image/jpeg"})
+        self.assertEqual(status, 403)
+        # Non-image -> 400.
+        status, _, data = self.req(
+            "POST", "/api/photos/" + pid + "/edit", body=b"not an image",
+            headers=h)
+        self.assertEqual(status, 400)
+        # Unknown id -> 404.
+        buf = BytesIO()
+        Image.new("RGB", (1200, 1600), (30, 30, 200)).save(buf, "JPEG")
+        status, _, _ = self.req("POST", "/api/photos/nope.jpg/edit",
+                                body=buf.getvalue(), headers=h)
+        self.assertEqual(status, 404)
+        # Real edit: blue canvas replaces the red photo.
+        status, _, data = self.req("POST", "/api/photos/" + pid + "/edit",
+                                   body=buf.getvalue(), headers=h)
+        self.assertEqual(status, 200, data[:200])
+        self.assertTrue(json.loads(data)["ok"])
+        img = spectra_server.APP.photos_for("google-sub-1").source.load(pid)
+        r, g, b = img.getpixel((600, 800))
+        self.assertGreater(b, 150)
+        self.assertLess(r, 100)
+
+    def test_photos_js_served(self):
+        status, hdrs, data = self.req("GET", "/static/photos.js")
+        self.assertEqual(status, 200)
+        self.assertIn("application/javascript",
+                      hdrs.get("Content-Type", ""))
+        self.assertIn(b"ditherImage", data)
+        self.assertIn(b"serpentine", data.lower())
 
 
 if __name__ == "__main__":
