@@ -14,7 +14,7 @@ Small, versioned HTTP contract. Any server can feed the frame by implementing it
 
 ## Identities
 
-- `device_id`: `sf-` + lowercase 12-hex-digit ESP32-S3 MAC, e.g. `sf-94a9a811c2f4`.
+- `device_id`: `ff-` + lowercase 12-hex-digit ESP32-S3 MAC, e.g. `ff-94a9a811c2f4`.
   A username, **not** a secret.
 - Device credential: 256-bit random Bearer token, issued by the server at claim
   time, stored hashed (SHA-256) server-side. Sent as

@@ -1,7 +1,7 @@
 """Device registry: pairing, claim codes, device tokens.
 
 Security model (docs/SYSTEM_PLAN.md section 3):
-  - device_id ("sf-" + lowercase MAC) is a username, NOT a secret.
+  - device_id ("ff-" + lowercase MAC) is a username, NOT a secret.
   - The device token (256-bit, server-generated at claim time) is the secret.
     Only its SHA-256 hash is stored; the plaintext exists server-side only
     between claim approval and the device's first successful claim poll,
@@ -21,7 +21,7 @@ import re
 import secrets
 import time
 
-DEVICE_ID_RE = re.compile(r"^sf-[0-9a-f]{12}$")
+DEVICE_ID_RE = re.compile(r"^ff-[0-9a-f]{12}$")
 CLAIM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O/1/I/L
 CLAIM_TTL = 600  # seconds
 # Re-delivery grace: after the first poll_claim 200, the token stays

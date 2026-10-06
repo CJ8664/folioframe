@@ -652,7 +652,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if p.startswith(prefix):
             rest = p[len(prefix):]
             dev_id = rest.split("/")[0]
-            if re.fullmatch(r"sf-[0-9a-f]{12}", dev_id):
+            if re.fullmatch(r"ff-[0-9a-f]{12}", dev_id):
                 return dev_id, rest[len(dev_id):]
         return None, None
 

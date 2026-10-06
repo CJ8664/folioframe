@@ -176,16 +176,15 @@ void EE02Board::blinkLed(int times) {
 }
 
 String EE02Board::deviceId() {
-  // Must match the server's device-ID rule: "sf-" + 12 lowercase hex
+  // Must match the server's device-ID rule: "ff-" + 12 lowercase hex
   // digits (see PROTOCOL.md). Uppercase or a short ID is rejected with
   // "bad device_id" at register time.
-  // NOTE: the "sf-" prefix is intentionally NOT renamed to "ff-". It is the
-  // device's stable identity (MAC-derived): changing it would make the
-  // server treat this as a brand-new, unpaired device and force a re-pair.
-  // It is an internal identifier, not user-visible branding.
+  // NOTE: the "ff-" prefix is the device's stable identity (MAC-derived).
+  // Changing it again would make the server treat this as a brand-new,
+  // unpaired device and force a re-pair.
   uint64_t mac = ESP.getEfuseMac();
   char buf[16];
-  snprintf(buf, sizeof(buf), "sf-%012llx",
+  snprintf(buf, sizeof(buf), "ff-%012llx",
            (unsigned long long)(mac & 0xFFFFFFFFFFFFULL));
   return String(buf);
 }

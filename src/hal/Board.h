@@ -54,6 +54,6 @@ class Board {
   virtual void setLed(bool on) = 0;
   virtual void blinkLed(int times) = 0;
 
-  // Stable device id, e.g. "sf-a1b2c3d4e5f6" (MAC-derived, lowercase).
+  // Stable device id, e.g. "ff-a1b2c3d4e5f6" (MAC-derived, lowercase).
   virtual String deviceId() = 0;
 };

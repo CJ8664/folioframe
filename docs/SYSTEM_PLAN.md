@@ -103,8 +103,8 @@ Firebase, or pick home-lab-first.
 - **User**: Google `sub` (stable), plus email/display name for the UI.
   Single-user deployment = allowlist containing Chirag's email; the data model
   is multi-user-capable from day one so no migration is ever needed.
-- **Device**: `device_id = "sf-" + lowercase(ESP32-S3 eFuse MAC)`, e.g.
-  `sf-94a9a811c2f4`. Stable across factory resets, **not secret** (it's a
+- **Device**: `device_id = "ff-" + lowercase(ESP32-S3 eFuse MAC)`, e.g.
+  `ff-94a9a811c2f4`. Stable across factory resets, **not secret** (it's a
   username, not a password).
 - **Device credential**: 256-bit random token generated **server-side** at
   claim time, delivered once to the device over the claim-poll response (TLS),

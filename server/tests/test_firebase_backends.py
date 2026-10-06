@@ -196,7 +196,7 @@ class TestClientProvider(unittest.TestCase):
         from sources.google_photos import GoogleOAuth, GPhotosController
         creds = {"cid": "first", "sec": "s1"}
         o = GoogleOAuth(redirect_uri="http://x/cb",
-                        token_path="/tmp/sf-test-nope.json",
+                        token_path="/tmp/ff-test-nope.json",
                         client_provider=lambda: (creds["cid"], creds["sec"]))
         self.assertIn("client_id=first", o.auth_url("st"))
         creds.update(cid="second", sec="s2")  # rotation, no restart

@@ -10,7 +10,7 @@ proven otherwise.
 - [ ] Flashes over USB-C (`pio run -t upload`); serial shows
       `SpectraFrame 2.0.0 build 2`
 - [ ] First boot with no Wi-Fi creds → panel shows the setup screen with the
-      `SF-Setup-sf-xxxxxxxxxxxx` AP name and `http://192.168.4.1`
+      `FF-Setup-ff-xxxxxxxxxxxx` AP name and `http://192.168.4.1`
 - [ ] Web flash alternative: publish the four `server/firmware/*.bin` files,
       open the server's public `/flash` page in Chrome/Edge, flash over USB
 

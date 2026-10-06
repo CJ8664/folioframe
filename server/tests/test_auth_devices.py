@@ -179,7 +179,7 @@ class TestDeviceRegistry(unittest.TestCase):
         self.reg = DeviceRegistry(
             JsonStore(os.path.join(self.tmp, "registry.json")))
 
-    def _pair(self, user="user-1", device="sf-aabbccddeeff"):
+    def _pair(self, user="user-1", device="ff-aabbccddeeff"):
         code = self.reg.register(device, "gdeb0709e01", "2.0.0")["claim_code"]
         self.reg.claim(device, code, user)
         poll = self.reg.poll_claim(device, code)
@@ -187,16 +187,16 @@ class TestDeviceRegistry(unittest.TestCase):
         return poll["device_token"]
 
     def test_claim_code_format(self):
-        code = self.reg.register("sf-001122334455")["claim_code"]
+        code = self.reg.register("ff-001122334455")["claim_code"]
         self.assertRegex(code, r"^[A-Z2-9]{4}-[A-Z2-9]{4}$")
 
     def test_poll_before_approval_is_pending(self):
-        code = self.reg.register("sf-001122334455")["claim_code"]
+        code = self.reg.register("ff-001122334455")["claim_code"]
         self.assertEqual(
-            self.reg.poll_claim("sf-001122334455", code)["status"], "pending")
+            self.reg.poll_claim("ff-001122334455", code)["status"], "pending")
 
     def test_token_delivered_exactly_once(self):
-        device = "sf-aabbccddeeff"
+        device = "ff-aabbccddeeff"
         code = self.reg.register(device)["claim_code"]
         self.reg.claim(device, code, "user-1")
         token = self.reg.poll_claim(device, code)["device_token"]
@@ -215,38 +215,38 @@ class TestDeviceRegistry(unittest.TestCase):
 
     def test_token_hash_never_stores_plaintext(self):
         token = self._pair()
-        dev = self.reg._get("sf-aabbccddeeff")
+        dev = self.reg._get("ff-aabbccddeeff")
         self.assertEqual(dev["token_hash"], hash_token(token))
         # The plaintext is stashed only for the re-delivery grace window;
         # after it elapses the next poll wipes it.
         dev["claim_delivered_at"] = time.time() - 3600
         self.reg._put(dev)
         with self.assertRaises(BadClaim):
-            self.reg.poll_claim("sf-aabbccddeeff", "XXXX-XXXX")
-        dev = self.reg._get("sf-aabbccddeeff")
+            self.reg.poll_claim("ff-aabbccddeeff", "XXXX-XXXX")
+        dev = self.reg._get("ff-aabbccddeeff")
         self.assertNotIn(token, json.dumps(dev))
 
     def test_one_device_one_user(self):
         self._pair(user="user-1")
-        code = self.reg.register("sf-aabbccddeeff")["claim_code"]
+        code = self.reg.register("ff-aabbccddeeff")["claim_code"]
         with self.assertRaises(AlreadyPaired):
-            self.reg.claim("sf-aabbccddeeff", code, "user-2")
+            self.reg.claim("ff-aabbccddeeff", code, "user-2")
 
     def test_unpair_revokes_token(self):
         token = self._pair()
-        self.assertTrue(self.reg.unpair("sf-aabbccddeeff", "user-1"))
+        self.assertTrue(self.reg.unpair("ff-aabbccddeeff", "user-1"))
         self.assertIsNone(self.reg.verify_token(token))
         # stranger cannot unpair
-        self._pair(user="user-1", device="sf-112233445566")
-        self.assertFalse(self.reg.unpair("sf-112233445566", "user-2"))
+        self._pair(user="user-1", device="ff-112233445566")
+        self.assertFalse(self.reg.unpair("ff-112233445566", "user-2"))
 
     def test_expired_claim_code(self):
-        code = self.reg.register("sf-001122334455")["claim_code"]
-        dev = self.reg._get("sf-001122334455")
+        code = self.reg.register("ff-001122334455")["claim_code"]
+        dev = self.reg._get("ff-001122334455")
         dev["claim_expires"] = int(time.time()) - 1
         self.reg._put(dev)
         with self.assertRaises(BadClaim):
-            self.reg.claim("sf-001122334455", code, "user-1")
+            self.reg.claim("ff-001122334455", code, "user-1")
 
     def test_rate_limiter(self):
         rl = RateLimiter(limit=3, window=60)
@@ -256,13 +256,13 @@ class TestDeviceRegistry(unittest.TestCase):
 
     def test_heartbeat_sanitizes_device_controlled_values(self):
         self._pair()
-        self.reg.heartbeat("sf-aabbccddeeff", {
+        self.reg.heartbeat("ff-aabbccddeeff", {
             "battery_mv": "<script>alert(1)</script>",
             "battery_pct": 99999,
             "rssi": "not-a-number",
             "fw": "x" * 100,
         })
-        dev = self.reg._get("sf-aabbccddeeff")
+        dev = self.reg._get("ff-aabbccddeeff")
         # garbage numeric input is dropped, out-of-range clamped, fw cut
         self.assertNotIn("battery_mv", dev)
         self.assertEqual(dev["battery_pct"], 100)
@@ -270,25 +270,25 @@ class TestDeviceRegistry(unittest.TestCase):
         self.assertEqual(dev["fw"], "x" * 32)
 
     def test_register_truncates_device_strings(self):
-        self.reg.register("sf-001122334455", panel="<b>evil</b>" + "y" * 50,
+        self.reg.register("ff-001122334455", panel="<b>evil</b>" + "y" * 50,
                           fw="1.0.0<script>")
-        dev = self.reg._get("sf-001122334455")
+        dev = self.reg._get("ff-001122334455")
         self.assertLessEqual(len(dev["panel"]), 32)
         self.assertLessEqual(len(dev["fw"]), 32)
 
     def test_self_unpair_invalidates_pending_claim(self):
-        token = self._pair(user="user-1", device="sf-001122334455")
+        token = self._pair(user="user-1", device="ff-001122334455")
         # fresh claim code issued after pairing (e.g. user opened portal)
-        code = self.reg.register("sf-001122334455")["claim_code"]
+        code = self.reg.register("ff-001122334455")["claim_code"]
         # factory reset from the device itself
         self.assertTrue(
-            self.reg.device_self_unpair("sf-001122334455"))
+            self.reg.device_self_unpair("ff-001122334455"))
         self.assertIsNone(self.reg.verify_token(token))
-        dev = self.reg._get("sf-001122334455")
+        dev = self.reg._get("ff-001122334455")
         self.assertIsNone(dev.get("claim_code"))
         # the pending code no longer works
         with self.assertRaises(BadClaim):
-            self.reg.poll_claim("sf-001122334455", code)
+            self.reg.poll_claim("ff-001122334455", code)
 
 
 # --------------------------------------------------------------------------
@@ -387,7 +387,7 @@ class TestHTTP(unittest.TestCase):
         self.assertIn("application/manifest+json",
                       hdrs.get("Content-Type", ""))
         m = json.loads(data)
-        self.assertEqual(m["name"], "SpectraFrame")
+        self.assertEqual(m["name"], "FolioFrame")
         self.assertEqual(m["display"], "standalone")
         self.assertEqual(m["start_url"], "/")
         sizes = {i["sizes"] for i in m["icons"]}
@@ -455,7 +455,7 @@ class TestHTTP(unittest.TestCase):
              "Content-Type": "multipart/form-data; boundary=B",
              "Content-Length": str(26 * 1024 * 1024)}
         status, _, data = self.req(
-            "POST", "/api/devices/sf-aaaa1111bbbb/photos/upload",
+            "POST", "/api/devices/ff-aaaa1111bbbb/photos/upload",
             body=" ", headers=h)
         self.assertEqual(status, 400)
         self.assertIn(b"too large", data)
@@ -497,7 +497,7 @@ class TestHTTP(unittest.TestCase):
         # 1. device registers -> claim code
         status, _, data = self.req(
             "POST", "/v1/device/register",
-            body=json.dumps({"device_id": "sf-aaaa1111bbbb",
+            body=json.dumps({"device_id": "ff-aaaa1111bbbb",
                              "panel": "gdeb0709e01", "fw": "2.0.0"}),
             headers={"Content-Type": "application/json"})
         self.assertEqual(status, 201)
@@ -505,7 +505,7 @@ class TestHTTP(unittest.TestCase):
         # 2. device polls -> pending
         status, _, data = self.req(
             "POST", "/v1/device/claim",
-            body=json.dumps({"device_id": "sf-aaaa1111bbbb",
+            body=json.dumps({"device_id": "ff-aaaa1111bbbb",
                              "claim_code": code}),
             headers={"Content-Type": "application/json"})
         self.assertEqual(json.loads(data)["status"], "pending")
@@ -517,7 +517,7 @@ class TestHTTP(unittest.TestCase):
         # 4. device polls -> gets token exactly once
         status, _, data = self.req(
             "POST", "/v1/device/claim",
-            body=json.dumps({"device_id": "sf-aaaa1111bbbb",
+            body=json.dumps({"device_id": "ff-aaaa1111bbbb",
                              "claim_code": code}),
             headers={"Content-Type": "application/json"})
         j = json.loads(data)
@@ -543,7 +543,7 @@ class TestHTTP(unittest.TestCase):
         status, _, data = self.req("GET", "/api/devices", headers=h)
         devs = json.loads(data)["devices"]
         self.assertEqual(len(devs), 1)
-        self.assertEqual(devs[0]["device_id"], "sf-aaaa1111bbbb")
+        self.assertEqual(devs[0]["device_id"], "ff-aaaa1111bbbb")
 
     def _raw_request(self, raw: bytes) -> bytes:
         s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
@@ -630,7 +630,7 @@ class TestHTTP(unittest.TestCase):
             status, hdrs, data = self.req("GET", "/flash/manifest.json")
             self.assertEqual(status, 200)
             m = json.loads(data)
-            self.assertEqual(m["name"], "SpectraFrame")
+            self.assertEqual(m["name"], "FolioFrame")
             self.assertEqual(m["builds"][0]["chipFamily"], "ESP32-S3")
             parts = m["builds"][0]["parts"]
             self.assertEqual(
@@ -682,7 +682,7 @@ class TestHTTP(unittest.TestCase):
              "X-CSRF-Token": csrf}
         status, _, data = self.req(
             "POST", "/v1/device/register",
-            body=json.dumps({"device_id": "sf-0a0000000001",
+            body=json.dumps({"device_id": "ff-0a0000000001",
                              "panel": "gdeb0709e01", "fw": "2.0.0"}),
             headers={"Content-Type": "application/json"})
         self.assertEqual(status, 201)
@@ -691,7 +691,7 @@ class TestHTTP(unittest.TestCase):
                  body=json.dumps({"code": code}), headers=h)
         status, _, data = self.req(
             "POST", "/v1/device/claim",
-            body=json.dumps({"device_id": "sf-0a0000000001",
+            body=json.dumps({"device_id": "ff-0a0000000001",
                              "claim_code": code}),
             headers={"Content-Type": "application/json"})
         token = json.loads(data)["device_token"]
@@ -718,12 +718,12 @@ class TestHTTP(unittest.TestCase):
         h = {"Content-Type": "application/json", "Cookie": cookie,
              "X-CSRF-Token": csrf}
         self.req("POST", "/v1/device/register",
-                 body=json.dumps({"device_id": "sf-cccc3333dddd"}),
+                 body=json.dumps({"device_id": "ff-cccc3333dddd"}),
                  headers={"Content-Type": "application/json"})
         # second registration issues a fresh code; claim it as user 1
         status, _, data = self.req(
             "POST", "/v1/device/register",
-            body=json.dumps({"device_id": "sf-cccc3333dddd"}),
+            body=json.dumps({"device_id": "ff-cccc3333dddd"}),
             headers={"Content-Type": "application/json"})
         code = json.loads(data)["claim_code"]
         status, _, _ = self.req("POST", "/api/devices/claim",
@@ -732,22 +732,22 @@ class TestHTTP(unittest.TestCase):
         # simulate a *different* user by re-registering (new code) and
         # claiming directly through the registry as user-2
         reg = spectra_server.APP.devices
-        code2 = reg.register("sf-cccc3333dddd")["claim_code"]
+        code2 = reg.register("ff-cccc3333dddd")["claim_code"]
         with self.assertRaises(AlreadyPaired):
-            reg.claim("sf-cccc3333dddd", code2, "google-sub-2")
+            reg.claim("ff-cccc3333dddd", code2, "google-sub-2")
 
     def test_cross_user_device_isolation(self):
         cookie, csrf = self.login()  # user-1
         h = {"Cookie": cookie, "X-CSRF-Token": csrf}
         reg = spectra_server.APP.devices
-        code = reg.register("sf-eeee5555ffff")["claim_code"]
-        reg.claim("sf-eeee5555ffff", code, "google-sub-2")  # other user
+        code = reg.register("ff-eeee5555ffff")["claim_code"]
+        reg.claim("ff-eeee5555ffff", code, "google-sub-2")  # other user
         # user-1 must not see it: 404, not 403 (no existence leak)
         status, _, _ = self.req("GET",
-                                "/api/devices/sf-eeee5555ffff/preview",
+                                "/api/devices/ff-eeee5555ffff/preview",
                                 headers=h)
         self.assertEqual(status, 404)
-        status, _, _ = self.req("DELETE", "/api/devices/sf-eeee5555ffff",
+        status, _, _ = self.req("DELETE", "/api/devices/ff-eeee5555ffff",
                                 headers=h)
         self.assertEqual(status, 404)
 
@@ -755,9 +755,9 @@ class TestHTTP(unittest.TestCase):
         cookie, csrf = self.login()
         h = {"Cookie": cookie, "X-CSRF-Token": csrf}
         reg = spectra_server.APP.devices
-        code = reg.register("sf-ffff6666aaaa")["claim_code"]
-        reg.claim("sf-ffff6666aaaa", code, "google-sub-1")
-        poll = reg.poll_claim("sf-ffff6666aaaa", code)
+        code = reg.register("ff-ffff6666aaaa")["claim_code"]
+        reg.claim("ff-ffff6666aaaa", code, "google-sub-1")
+        poll = reg.poll_claim("ff-ffff6666aaaa", code)
         token = poll["device_token"]
 
         # build multipart upload
@@ -771,7 +771,7 @@ class TestHTTP(unittest.TestCase):
                 f"Content-Type: image/png\r\n\r\n").encode() + png + \
                f"\r\n--{boundary}--\r\n".encode()
         status, _, data = self.req(
-            "POST", "/api/devices/sf-ffff6666aaaa/photos/upload", body=body,
+            "POST", "/api/devices/ff-ffff6666aaaa/photos/upload", body=body,
             headers={"Content-Type":
                      f"multipart/form-data; boundary={boundary}", **h})
         self.assertEqual(status, 200, data[:200])
@@ -787,12 +787,12 @@ class TestHTTP(unittest.TestCase):
 
         # preview reflects override
         status, _, data = self.req(
-            "GET", "/api/devices/sf-ffff6666aaaa/preview", headers=h)
+            "GET", "/api/devices/ff-ffff6666aaaa/preview", headers=h)
         self.assertEqual(status, 200)
 
         # clear -> back to normal
         status, _, _ = self.req(
-            "DELETE", "/api/devices/sf-ffff6666aaaa/photos/override",
+            "DELETE", "/api/devices/ff-ffff6666aaaa/photos/override",
             headers=h)
         self.assertEqual(status, 200)
 

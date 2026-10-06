@@ -26,7 +26,7 @@
 #include "ui/StatusScreen.h"
 
 #define FW_VERSION "0.0.2"
-#define FW_BUILD 19
+#define FW_BUILD 20
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
