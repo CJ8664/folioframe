@@ -1485,8 +1485,20 @@ HINT_JS = """
   }
   function open(b){
     closeAll(b);
-    var q=popOf(b); if(q) q.hidden=false;
+    var q=popOf(b); if(!q) return;
+    q.hidden=false;
     b.setAttribute('aria-expanded','true');
+    /* keep the tooltip fully inside the viewport (e.g. narrow phones) */
+    q.style.left=''; q.style.right=''; q.style.transform='';
+    var r=q.getBoundingClientRect(), m=12, vw=window.innerWidth;
+    if(r.left < m || r.right > vw - m){
+      q.style.left='50%'; q.style.right='auto';
+      q.style.transform='translateX(-50%)';
+      r=q.getBoundingClientRect();
+      var s=0;
+      if(r.left < m) s=m-r.left; else if(r.right > vw-m) s=(vw-m)-r.right;
+      if(s) q.style.transform='translateX(calc(-50% + '+s+'px))';
+    }
   }
   function close(b){
     var q=popOf(b); if(q) q.hidden=true;
