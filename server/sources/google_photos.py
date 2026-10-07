@@ -335,13 +335,34 @@ class PickFlow:
                     data = self.client.download(base_url)
                     ext = ".jpg" if "jpeg" in mt else ".png"
                     name = item["id"] + ext
+                    # Capture metadata for display rendering (date, filename,
+                    # dimensions). Stored as JSON sidecar alongside the image.
+                    mf_meta = mf.get("mediaFileMetadata") or {}
+                    metadata = {
+                        "id": item["id"],
+                        "createTime": item.get("createTime"),
+                        "filename": mf.get("filename"),
+                        "mimeType": mt or "image/jpeg",
+                        "width": mf_meta.get("width"),
+                        "height": mf_meta.get("height"),
+                        "source": "google_photos",
+                        "downloadedAt": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }
+                    meta_json = json.dumps(metadata).encode()
+                    meta_name = item["id"] + ".meta.json"
                     if self.blob_store is not None:
                         self.blob_store.put(self.blob_prefix + name, data,
                                             mt or "image/jpeg")
+                        self.blob_store.put(self.blob_prefix + meta_name,
+                                            meta_json, "application/json")
                     else:
                         with open(os.path.join(self.cache_dir, name),
                                   "wb") as f:
                             f.write(data)
+                        with open(os.path.join(self.cache_dir, meta_name),
+                                  "wb") as f:
+                            f.write(meta_json)
                     count += 1
                 page_token = resp.get("nextPageToken")
                 if not page_token:
@@ -381,6 +402,26 @@ class GooglePhotosSource(Source):
 
     def next_id(self, history):
         return pick_unseen(self._ids(), history, self.rng)
+
+    def get_metadata(self, item_id):
+        """Return metadata dict for a photo, or None if not found."""
+        # item_id is like "ABC123.jpg"; metadata is "ABC123.meta.json"
+        base = item_id.rsplit(".", 1)[0]
+        meta_name = base + ".meta.json"
+        try:
+            if self.blob_store is not None:
+                data = self.blob_store.get(self.blob_prefix + meta_name)
+                if data is None:
+                    return None
+                return json.loads(data)
+            else:
+                path = os.path.join(self.cache_dir, meta_name)
+                if not os.path.exists(path):
+                    return None
+                with open(path) as f:
+                    return json.load(f)
+        except Exception:
+            return None
 
     def load(self, item_id):
         if self.blob_store is not None:

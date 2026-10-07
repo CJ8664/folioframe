@@ -201,9 +201,12 @@ class TestPickFlow(unittest.TestCase):
                  {"mediaItemsSet": True}],
                 [{"mediaItems": [
                     {"id": "p1", "type": "TYPE_IMAGE",
+                     "createTime": "2026-10-03T10:21:13Z",
                      "mediaFile": {"baseUrl": "https://x/p1",
                                    "mimeType": "image/jpeg",
-                                   "filename": "p1.jpg"}},
+                                   "filename": "IMG_001.jpg",
+                                   "mediaFileMetadata": {"width": 4000,
+                                                         "height": 3000}}},
                     {"id": "v1", "type": "TYPE_VIDEO",
                      "mediaFile": {"baseUrl": "https://x/v1",
                                    "mimeType": "video/mp4",
@@ -212,7 +215,15 @@ class TestPickFlow(unittest.TestCase):
             n = flow.run("sess1", poll=lambda s: None)
             self.assertEqual(n, 1)
             files = os.listdir(os.path.join(tmp, "cache"))
-            self.assertEqual(files, ["p1.jpg"])
+            self.assertEqual(sorted(files), ["p1.jpg", "p1.meta.json"])
+            # Verify metadata was captured
+            import json as _json
+            with open(os.path.join(tmp, "cache", "p1.meta.json")) as f:
+                meta = _json.load(f)
+            self.assertEqual(meta["id"], "p1")
+            self.assertEqual(meta["filename"], "IMG_001.jpg")
+            self.assertEqual(meta["createTime"], "2026-10-03T10:21:13Z")
+            self.assertEqual(meta["width"], 4000)
             self.assertEqual(calls["deletes"], 1)  # session cleaned up
 
     def test_timeout(self):
