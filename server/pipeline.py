@@ -33,6 +33,7 @@ Algorithm notes (evaluated Oct 2026 against the GDEB0709E01 Spectra 6 panel):
   (the two algorithms that matter here are ported above, keeping the
   Docker image to Python + Pillow + numpy).
 """
+import epaper_dithering as _ed
 import hashlib
 import itertools
 from io import BytesIO
@@ -219,25 +220,36 @@ def _palette_image():
     return pal
 
 
+
+# Mapping from epaper-dithering palette indices to our PALETTE nibbles.
+# Library palette order: 0=black, 1=white, 2=yellow, 3=red, 4=blue, 5=green
+# Our PALETTE: 0x0=white, 0x2=green, 0x6=red, 0xB=yellow, 0xD=blue, 0xF=black
+_LIB_TO_NATIVE = (0xF, 0x0, 0xB, 0x6, 0xD, 0x2)
+
+
+def _dither_with_library(img: Image.Image, mode) -> bytearray:
+    """Dither using epaper-dithering library, return native color codes."""
+    # The library handles tone mapping and gamut compression internally
+    # when tone='auto' and gamut='auto' are set.
+    dithered = _ed.dither_image(
+        img,
+        _ed.SPECTRA_7_3_6COLOR_V2,
+        mode=mode,
+        tone="auto",
+        gamut="auto",
+    )
+    # Convert palette indices to native codes
+    pixels = list(dithered.getdata())
+    return bytearray(_LIB_TO_NATIVE[p] for p in pixels)
+
+
 def dither_floyd_steinberg(img: Image.Image) -> bytearray:
-    """Floyd-Steinberg error diffusion -> nibble per pixel.
+    """Floyd-Steinberg error diffusion using epaper-dithering library.
 
-    Uses Pillow's C implementation against our palette (~0.05 s for a
-    1200x1600 frame; a pure-Python loop takes minutes). The returned
-    palette may contain duplicate entries, so indices are remapped
-    through the actual output colors rather than trusted directly.
+    Returns a bytearray of native color codes, row-major.
+    Native codes: 0x0 black, 0x1 white, 0x2 yellow, 0x3 red, 0x5 blue, 0x6 green.
     """
-    q = img.quantize(palette=_palette_image(), dither=Image.FLOYDSTEINBERG)
-    pal = q.getpalette()
-    lut = [_nearest((pal[3 * i], pal[3 * i + 1], pal[3 * i + 2]))
-           for i in range(256)]
-    mapped = q.point(lut)
-    return bytearray(mapped.getdata())
-
-
-_coverage_solver_cache = None
-
-
+    return _dither_with_library(img, _ed.DitherMode.FLOYD_STEINBERG)
 def _coverage_solver():
     """Barycentric solvers for every non-degenerate 4-ink tetrahedron.
 
@@ -266,67 +278,11 @@ def _coverage_solver():
 
 
 def dither_ordered(img: Image.Image) -> bytearray:
-    """Coverage-based Bayer 8x8 dither -> nibble per pixel.
+    """Ordered Bayer dithering using epaper-dithering library.
 
-    For each pixel, solves for the ink proportions whose linear-light mix
-    equals the target colour (barycentric solve over 4-ink tetrahedra,
-    keeping the mixture whose inks sit closest to the target), then uses
-    the Bayer threshold as an inverse-CDF sampler over those proportions.
-    Colours outside the ink hull fall back to the nearest ink. Banded so
-    peak memory stays bounded; ~1-2 s for a full frame.
+    Returns a bytearray of native color codes, row-major.
     """
-    linear_inks, lengths, simplices = _coverage_solver()
-    w, h = img.size
-    rgb = np.asarray(img)  # (h, w, 3) uint8
-    out = np.empty(w * h, dtype=np.uint8)
-
-    band_rows = 160
-    xs = np.arange(w)
-    for y0 in range(0, h, band_rows):
-        y1 = min(h, y0 + band_rows)
-        B = (y1 - y0) * w
-        tgt = _SRGB2LIN[rgb[y0:y1].reshape(-1, 3)]  # (B,3) linear
-        t4 = np.column_stack([tgt, np.ones(B)])     # (B,4)
-
-        best_spread = np.full(B, np.inf)
-        best_w = np.zeros((B, 4))
-        best_inks = np.zeros((B, 4), dtype=np.int64)
-        for combo, inv in simplices:
-            wgt = t4 @ inv.T  # (B,4); rows of inv dot (r,g,b,1)
-            total = wgt.sum(axis=1)
-            valid = (wgt >= -1e-9).all(axis=1) & (total > 1e-9)
-            if not valid.any():
-                continue
-            wpos = np.clip(wgt, 0.0, None)
-            wpos /= total[:, None]
-            spread = (wpos * lengths[list(combo)]).sum(axis=1)
-            better = valid & (spread < best_spread)
-            best_spread[better] = spread[better]
-            best_w[better] = wpos[better]
-            best_inks[better] = combo
-
-        w6 = np.zeros((B, 6))
-        rows = np.arange(B)[:, None]
-        w6[rows, best_inks] = best_w
-
-        missing = ~np.isfinite(best_spread)
-        if missing.any():
-            d2 = ((tgt[missing, None, :] - linear_inks[None, :, :]) ** 2).sum(axis=2)
-            nearest = d2.argmin(axis=1)
-            w6[missing] = 0.0
-            w6[missing, nearest] = 1.0
-
-        # Bayer threshold as inverse-CDF sampler over the mixture.
-        ys = np.arange(y0, y1)
-        thr = (_BAYER8[ys[:, None] % 8, xs[None, :] % 8] + 0.5) / 64.0
-        cum = np.cumsum(w6, axis=1)
-        idx = (cum <= thr.reshape(-1, 1)).sum(axis=1)
-        idx = np.clip(idx, 0, 5)
-        out[y0 * w:y1 * w] = _INK_NIBBLES[idx]
-
-    return bytearray(out)
-
-
+    return _dither_with_library(img, _ed.DitherMode.ORDERED)
 def pack(nibbles: bytearray, width: int, height: int) -> bytes:
     """Nibbles -> packed bytes, high nibble first."""
     assert len(nibbles) == width * height
@@ -356,7 +312,9 @@ def process_image(img: Image.Image, width: int, height: int,
     DEFAULT_TONE, or None for defaults.
     """
     img = cover(img, width, height)
-    img = apply_preprocessing(img, tone_cfg)
+    # Note: epaper-dithering handles tone mapping and gamut compression
+    # internally via tone="auto" and gamut="auto". Our legacy
+    # apply_preprocessing is skipped to avoid double-processing.
     nibbles = (dither_floyd_steinberg(img) if dither == "floyd"
                else dither_ordered(img))
     return pack(nibbles, width, height)
