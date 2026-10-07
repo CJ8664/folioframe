@@ -175,12 +175,43 @@ class GoogleOAuth:
         return self._tokens["access_token"]
 
 
+def _is_transient_network_error(e):
+    """True for DNS, connection, and timeout errors (retryable)."""
+    import socket
+    if isinstance(e, urllib.error.URLError):
+        # URLError wraps socket.gaierror (DNS), ConnectionError, TimeoutError
+        reason = e.reason
+        return isinstance(reason, (socket.gaierror, socket.herror,
+                                   ConnectionError, TimeoutError,
+                                   socket.timeout))
+    return isinstance(e, (ConnectionError, TimeoutError, socket.timeout,
+                          socket.gaierror, socket.herror))
+
+
+def _http_with_retry(http_fn, max_attempts=4):
+    """Wrap an _http-style fn with retry for transient network errors."""
+    def wrapper(method, url, headers=None, data=None):
+        last = None
+        for attempt in range(max_attempts):
+            try:
+                return http_fn(method, url, headers=headers, data=data)
+            except Exception as e:
+                last = e
+                if not _is_transient_network_error(e):
+                    raise
+                if attempt < max_attempts - 1:
+                    time.sleep(min(2.0 * (attempt + 1), 8.0))
+        raise last
+    return wrapper
+
+
 class PickerClient:
     """Thin wrapper over the Photos Picker API."""
 
     def __init__(self, oauth, http=_http):
         self.oauth = oauth
-        self._http = http
+        # Retry transient DNS/network failures (Docker DNS can blip)
+        self._http = _http_with_retry(http)
 
     def _auth(self):
         return {"Authorization": "Bearer " + self.oauth.access_token()}
@@ -258,8 +289,6 @@ class PickFlow:
         while True:
             s = self.client.get_session(session_id)
             if s.get("mediaItemsSet"):
-                print(f"PickFlow: session {session_id} mediaItemsSet=true",
-                      flush=True)
                 break
             pc = s.get("pollingConfig", {})
             interval = _parse_duration(pc.get("pollInterval", "2s")) or 2.0
@@ -275,9 +304,6 @@ class PickFlow:
         resp = None
         for attempt in range(12):
             resp = self.client.list_media_items(session_id, None)
-            n_items = len(resp.get("mediaItems", []))
-            print(f"PickFlow: list attempt {attempt+1}: {n_items} items",
-                  flush=True)
             if resp.get("mediaItems"):
                 break
             sleep(min(2.0 * (attempt + 1), 10.0))
@@ -293,18 +319,9 @@ class PickFlow:
                 for item in resp.get("mediaItems", []):
                     if count >= self.max_items:
                         break
-                    mt = item.get("mimeType", "")
-                    print(f"PickFlow: item {item.get('id')} mimeType={mt}",
-                          flush=True)
-                    if not mt.startswith("image/"):
-                        print(f"PickFlow: skipping non-image {item.get('id')}",
-                              flush=True)
+                    if not item.get("mimeType", "").startswith("image/"):
                         continue  # photo frame: images only
-                    print(f"PickFlow: downloading {item.get('id')}",
-                          flush=True)
                     data = self.client.download(item["baseUrl"])
-                    print(f"PickFlow: downloaded {len(data)} bytes",
-                          flush=True)
                     ext = ".jpg" if "jpeg" in item["mimeType"] else ".png"
                     name = item["id"] + ext
                     if self.blob_store is not None:
