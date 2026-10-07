@@ -268,9 +268,23 @@ class PickFlow:
             sleep(interval)
         count = 0
         page_token = None
+        # Google's Picker API is eventually consistent: mediaItemsSet may be
+        # true before list returns the items. Retry with backoff.
+        resp = None
+        for attempt in range(12):
+            resp = self.client.list_media_items(session_id, None)
+            if resp.get("mediaItems"):
+                break
+            sleep(min(2.0 * (attempt + 1), 10.0))
+        first = True
         try:
             while count < self.max_items:
-                resp = self.client.list_media_items(session_id, page_token)
+                # First iteration reuses the page from the retry above;
+                # subsequent iterations fetch the next page.
+                if not first:
+                    resp = self.client.list_media_items(session_id,
+                                                        page_token)
+                first = False
                 for item in resp.get("mediaItems", []):
                     if count >= self.max_items:
                         break
