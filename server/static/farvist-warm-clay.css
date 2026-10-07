@@ -1,0 +1,79 @@
+/* ==========================================================================
+   Farvist Warm Clay theme for FolioFrame.
+   Maps Farvist's design tokens (--fv-*) onto the Warm Clay (light) and
+   Ink Dark (dark) palettes. Unlayered, so it wins over Farvist's @layer
+   styles. Loaded after vendor/farvist.min.css, before folioframe.css.
+   ========================================================================== */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --fv-primary: #c1663e;
+  --fv-accent: #c1663e;
+  --fv-secondary: #859879;
+  --fv-body-bg: #ece5d8;
+  --fv-body-color: #2f302a;
+  --fv-muted: #69685d;
+
+  --fv-glass-bg: rgba(255, 250, 241, .68);
+  --fv-glass-bg-strong: rgba(255, 250, 241, .94);
+  --fv-glass-border: rgba(255, 255, 255, .76);
+  --fv-glass-blur: 26px;
+  --fv-glass-saturate: 160%;
+
+  --fv-border-color: #d8cdbc;
+  --fv-border-radius: .875rem;
+
+  --fv-bg-gradient:
+    radial-gradient(48rem 48rem at 82% -12%, rgba(193, 102, 62, .20), transparent 60%),
+    radial-gradient(36rem 36rem at -8% 18%, rgba(133, 152, 121, .22), transparent 58%),
+    radial-gradient(40rem 40rem at 50% 118%, rgba(127, 168, 160, .18), transparent 58%);
+
+  --fv-font-base: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+
+  --fv-btn-color: #fffaf1;
+  --fv-btn-bg: #c1663e;
+  --fv-btn-border: #c1663e;
+  --fv-btn-hover-bg: #9e4c2e;
+  --fv-btn-hover-border: #9e4c2e;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --fv-primary: #d9a441;
+  --fv-accent: #d9a441;
+  --fv-secondary: #9db08e;
+  --fv-body-bg: #26231c;
+  --fv-body-color: #f6f0e2;
+  --fv-muted: #b7ad9a;
+
+  --fv-glass-bg: rgba(31, 28, 21, .62);
+  --fv-glass-bg-strong: rgba(31, 28, 21, .94);
+  --fv-glass-border: rgba(246, 240, 226, .14);
+  --fv-glass-blur: 26px;
+  --fv-glass-saturate: 160%;
+
+  --fv-border-color: rgba(240, 198, 108, .28);
+  --fv-border-radius: .875rem;
+
+  --fv-bg-gradient:
+    radial-gradient(48rem 48rem at 82% -12%, rgba(193, 102, 62, .14), transparent 60%),
+    radial-gradient(36rem 36rem at -8% 18%, rgba(122, 145, 105, .12), transparent 58%),
+    radial-gradient(40rem 40rem at 50% 118%, rgba(120, 165, 158, .10), transparent 58%);
+
+  --fv-font-base: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+
+  --fv-btn-color: #17150f;
+  --fv-btn-bg: #d9a441;
+  --fv-btn-border: #d9a441;
+  --fv-btn-hover-bg: #f0c66c;
+  --fv-btn-hover-border: #f0c66c;
+}
+
+/* FolioFrame card tuning on top of Farvist's card */
+.card {
+  border-radius: 26px;
+  padding: 24px;
+}

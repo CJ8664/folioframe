@@ -1411,7 +1411,11 @@ def _static_ver(name):
 # Frosted-glass design system (iOS HIG + Umbrel 2.0 inspired).
 # Dark-first; light mode via prefers-color-scheme. Mobile-first layout.
 # ---------------------------------------------------------------------------
-THEME_CSS = ("<link rel='stylesheet' href='/static/folioframe.css?v=" +
+THEME_CSS = ("<link rel='stylesheet' href='/static/vendor/farvist.min.css?v=" +
+             _static_ver("vendor/farvist.min.css") + "'>" +
+             "<link rel='stylesheet' href='/static/farvist-warm-clay.css?v=" +
+             _static_ver("farvist-warm-clay.css") + "'>" +
+             "<link rel='stylesheet' href='/static/folioframe.css?v=" +
              _static_ver("folioframe.css") + "'>")
 
 PWA_HEAD = """
@@ -1428,11 +1432,14 @@ PWA_HEAD = """
 (function(){try{
   var t=localStorage.getItem('folioframe-theme');
   if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+  document.documentElement.dataset.theme=t;
   if(t==='dark')document.documentElement.classList.add('dark');
 }catch(e){}})();
 function ffThemeToggle(){
   try{
-    var d=document.documentElement.classList.toggle('dark');
+    var el=document.documentElement;
+    var d=el.classList.toggle('dark');
+    el.dataset.theme=d?'dark':'light';
     localStorage.setItem('folioframe-theme',d?'dark':'light');
   }catch(e){}
 }
@@ -1580,7 +1587,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   </div>
   <div class='card' style='text-align:center'>
     <span class='muted'>Setting up a new frame?</span><br>
-    <a class='btn ghost sm' href='/flash' style='margin-top:8px'>Flash firmware over USB</a>
+    <a class='btn btn-ghost btn-sm' href='/flash' style='margin-top:8px'>Flash firmware over USB</a>
     <p class='fine'>No login needed — install the firmware here first, then set up the frame as usual.</p>
   </div>
 </main>
@@ -1665,7 +1672,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <div class='preview-top'>
       <div><h2 id='previewTitle'>Frame preview</h2><p id='previewName'>Selected photo</p></div>
       <div class='preview-actions'>
-        <button class='btn ghost sm' id='previewEdit' type='button'>Edit photo</button>
+        <button class='btn btn-ghost btn-sm' id='previewEdit' type='button'>Edit photo</button>
         <button class='iconbtn preview-close' id='previewClose' type='button' aria-label='Close preview'>&times;</button>
       </div>
     </div>
@@ -1717,17 +1724,17 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
           <output class='control-value' id='contrastValue' for='contrastRange'>100%</output>
         </div>
         <div class='adjustment-reset-row'>
-          <button class='btn ghost sm' id='resetAdjustments' type='button'>Reset brightness &amp; contrast</button>
+          <button class='btn btn-ghost btn-sm' id='resetAdjustments' type='button'>Reset brightness &amp; contrast</button>
         </div>
         <div class='rotate-row'>
-          <button class='btn ghost sm' id='rotateButton' type='button' aria-label='Rotate photo 90 degrees clockwise'>&#x21BB; Rotate 90&deg;</button>
+          <button class='btn btn-ghost btn-sm' id='rotateButton' type='button' aria-label='Rotate photo 90 degrees clockwise'>&#x21BB; Rotate 90&deg;</button>
           <span id='rotationValue'>0&deg;</span>
         </div>
       </div>
     </div>
     <div class='editor-actions'>
       <button class='btn ghost' id='editorCancel' type='button'>Cancel</button>
-      <button class='btn' id='editorApply' type='button'>Apply edit</button>
+      <button class='btn btn-primary' id='editorApply' type='button'>Apply edit</button>
     </div>
     <p class='editor-status' id='editorStatus' role='status'></p>
   </section>
@@ -1784,7 +1791,7 @@ def _flash_page(available, version, versions):
       <div class='card'>
         <h3>Firmware</h3>
         {picker}
-        <button class='btn' id='flash-go'>Connect &amp; flash</button>
+        <button class='btn btn-primary' id='flash-go'>Connect &amp; flash</button>
         <p class='fine'>Your browser will ask which serial port to use —
         pick the one for the frame. The flash runs in the console
         on the right.</p>
@@ -1914,7 +1921,7 @@ esp-web-install-button{--esp-tools-button-color:var(--accent);
     <span class='sp'></span>
     <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
       aria-label='Toggle theme'>&#x1F315;</button>
-    <a class='btn ghost sm' href='/'>Home</a>
+    <a class='btn btn-ghost btn-sm' href='/'>Home</a>
   </div></div>
   <div class='card hero'>
     <h1>Flash the frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About flashing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Installs FolioFrame firmware on the EE02 driver board over USB, right from this page. No login needed.</span></span></h1>
@@ -1938,7 +1945,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   <span class='sp'></span>
   <button class='iconbtn' onclick='ffThemeToggle()' title='Toggle theme'
     aria-label='Toggle theme'>&#x1F315;</button>
-  <button class='btn ghost sm' id='installbtn' style='display:none'>Install</button>
+  <button class='btn btn-ghost btn-sm' id='installbtn' style='display:none'>Install</button>
   <span class='avatar' id='avatar' title=''>?</span>
   <button class='iconbtn' onclick='logout()' title='Sign out'
     aria-label='Sign out'>&#x23FB;</button>
@@ -1954,7 +1961,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <p class='sub'>What your frames show right now.</p>
     <div class='seg' id='src' role='tablist' aria-label='Photo source'></div>
     <div class='btnrow'>
-      <button class='btn ghost sm' onclick='nextFrame()'>Show next photo now</button>
+      <button class='btn btn-ghost btn-sm' onclick='nextFrame()'>Show next photo now</button>
     </div>
     <p class='msg' id='src-msg'></p>
   </div>
@@ -1967,7 +1974,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <h2>Account</h2>
     <div class='kv'><span class='k'>Signed in as</span><b id='who'></b></div>
     <div class='btnrow'>
-      <button class='btn ghost sm' onclick='logout()'>Sign out</button>
+      <button class='btn btn-ghost btn-sm' onclick='logout()'>Sign out</button>
     </div>
   </div>
 </main>
@@ -2011,7 +2018,7 @@ async function renderPhotos(){
         <b>You choose</b><span>You pick exactly which photos we can see.</span>
       </div></div>
       <div class='btnrow'>
-        <a class='btn' href='/api/gphotos/connect?origin=${encodeURIComponent(location.origin)}'>Connect Google Photos</a>
+        <a class='btn btn-primary' href='/api/gphotos/connect?origin=${encodeURIComponent(location.origin)}'>Connect Google Photos</a>
       </div>
       <p class='muted'>You approve access on Google's own screen — nothing to copy or paste.</p>
       <p class='msg' id='photos-msg'></p>`;
@@ -2027,7 +2034,7 @@ async function renderPhotos(){
       <span class='muted'> &middot; ${g.cached} photo${g.cached==1?'':'s'} ready for your frame</span></p>
       ${st}
       <div class='btnrow'>
-        <button class='btn' onclick='gpick()'>Pick more photos</button>
+        <button class='btn btn-primary' onclick='gpick()'>Pick more photos</button>
         <button class='btn ghost' onclick='gdisc()'>Disconnect</button>
       </div>
       <p class='msg' id='photos-msg'></p>`;
@@ -2081,7 +2088,7 @@ async function renderDevices(){
   if(!d.devices.length){
     el.innerHTML=`<p><b>No frames paired yet.</b></p>
     <p class='muted'>When your frame arrives, pair it with the code shown on its screen.</p>
-    <div class='btnrow'><a class='btn' href='/claim'>Pair a frame</a></div>`;
+    <div class='btnrow'><a class='btn btn-primary' href='/claim'>Pair a frame</a></div>`;
     return;
   }
   const latestBuild=d.latest_build||0, latestFw=d.latest_fw||'';
@@ -2094,7 +2101,7 @@ async function renderDevices(){
       <span class='meta'>${esc(dev.device_id)}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the device ID'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>The frame’s unique ID, also shown on its setup screen.</span></span></span><br>
       <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
       &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}${fwBadge}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About frame status'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>When the frame last checked in, its battery level, and the installed firmware version.</span></span></span>
-      ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
+      ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn btn-ghost btn-sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
       <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
         <input type='file' name='photo' accept='image/*' required aria-label='Photo to push'>
@@ -2102,12 +2109,12 @@ async function renderDevices(){
       </form>
       <p class='muted'>Pushing pins the photo immediately; the frame shows it at its next wake.</p>
       <div class='btnrow'>
-        <button class='btn ghost sm' onclick='renameDev("${dev.device_id}")'>Rename</button>
-        <button class='btn ghost sm' onclick='unpair("${dev.device_id}")'>Unpair</button>
+        <button class='btn btn-ghost btn-sm' onclick='renameDev("${dev.device_id}")'>Rename</button>
+        <button class='btn btn-ghost btn-sm' onclick='unpair("${dev.device_id}")'>Unpair</button>
       </div>
     </div>`;
   }).join('')+`<p class='msg' id='dev-msg'></p>
-    <div class='btnrow'><a class='btn ghost sm' href='/claim'>Pair another frame</a></div>`;
+    <div class='btnrow'><a class='btn btn-ghost btn-sm' href='/claim'>Pair another frame</a></div>`;
 }
 function devMsg(msg,isErr){
   const m=document.getElementById('dev-msg');if(!m)return;
@@ -2154,16 +2161,18 @@ form .btn{width:100%;margin-top:14px}
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
 <div class='blob b3'></div></div>
 <main class='sheet' style='max-width:480px'>
-  <div class='card' style='text-align:center;margin-top:8vh'>
+  <div class='card' style='margin-top:8vh'>
+   <div class='card-body text-center'>
     <img src='/static/icon-192.png' alt='' style='width:64px;height:64px;border-radius:18px'>
-    <h2 style='margin-top:12px'>Pair a frame</h2>
+    <h2 class='card-title mt-2'>Pair a frame</h2>
     <p class='sub'>Enter the 8-character code shown on the frame's screen.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the pairing code'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>The code appears on the frame’s screen after it connects to Wi-Fi. It expires after a few minutes.</span></span></p>
     <form onsubmit='return pair(event)'>
-      <input id='code' class='code' placeholder='XXXX-XXXX' autocomplete='off'
+      <input id='code' class='form-control code' placeholder='XXXX-XXXX' autocomplete='off'
         autocapitalize='characters' maxlength='9' aria-label='Pairing code'>
-      <button class='btn'>Pair frame</button>
+      <button class='btn btn-primary w-100 mt-3'>Pair frame</button>
     </form>
     <p class='msg' id='msg'></p>
+   </div>
   </div>
 </main>
 <script>
