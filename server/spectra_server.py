@@ -2044,10 +2044,16 @@ async function renderPhotos(){
 async function gpick(){
   const msg=document.getElementById('photos-msg');
   msg.className='msg';msg.textContent='Opening the photo picker…';
+  const w=open('','_blank');
   const r=await api('POST','/api/gphotos/pick');
-  if(r.ok&&r.picker_uri){open(r.picker_uri,'_blank');renderPhotos();}
-  else{msg.className='msg err';
-    msg.textContent="Couldn't open the picker: "+(r.error||'unknown error')+'. Please try again.';}
+  if(r.ok&&r.picker_uri){
+    if(w){w.location.href=r.picker_uri;}else{open(r.picker_uri,'_blank');}
+    renderPhotos();
+  }else{
+    if(w){w.close();}
+    msg.className='msg err';
+    msg.textContent="Couldn't open the picker: "+(r.error||'unknown error')+'. Please try again.';
+  }
 }
 async function pollPick(){
   for(let i=0;i<48;i++){
