@@ -16,7 +16,6 @@
   var progressBar = document.getElementById('flash-progress-bar');
   var progressLabel = document.getElementById('flash-progress-label');
   var logEl = document.getElementById('flash-log');
-  var consoleWrap = document.getElementById('console-wrap');
 
   if (!goBtn) return; // not on the flash page
 
@@ -51,7 +50,7 @@
     setProgress(0, '');
     if (progressWrap) progressWrap.hidden = true;
     goBtn.disabled = false;
-    goBtn.textContent = 'Connect & Flash';
+    goBtn.textContent = 'Connect & flash';
   }
 
   // Terminal interface for ESPLoader — routes to our inline log console.
@@ -137,12 +136,15 @@
       log('Connecting to ESP32-S3 (resetting into bootloader)...');
       var chipName = await loader.main();
       log('Connected: ' + chipName);
+      // Safety: verify this is an ESP32-S3 before flashing
+      if (chipName && chipName.toUpperCase().indexOf('ESP32-S3') === -1 &&
+          chipName.toUpperCase().indexOf('ESP32S3') === -1) {
+        throw new Error('Unexpected chip: ' + chipName + '. Expected ESP32-S3. Aborting for safety.');
+      }
       setStatus('Connected to ' + chipName + ' — flashing...', '');
 
       // 5. Flash with progress
       var totalBytes = fileArray.reduce(function (acc, f) { return acc + f.data.length; }, 0);
-      var writtenSoFar = 0;
-
       await loader.writeFlash({
         fileArray: fileArray,
         flashMode: 'dio',
@@ -179,7 +181,7 @@
         try { await port.close(); } catch (e) { /* ignore */ }
       }
       goBtn.disabled = false;
-      goBtn.textContent = 'Connect & Flash';
+      goBtn.textContent = 'Connect & flash';
     }
   });
 
