@@ -293,9 +293,18 @@ class PickFlow:
                 for item in resp.get("mediaItems", []):
                     if count >= self.max_items:
                         break
-                    if not item.get("mimeType", "").startswith("image/"):
+                    mt = item.get("mimeType", "")
+                    print(f"PickFlow: item {item.get('id')} mimeType={mt}",
+                          flush=True)
+                    if not mt.startswith("image/"):
+                        print(f"PickFlow: skipping non-image {item.get('id')}",
+                              flush=True)
                         continue  # photo frame: images only
+                    print(f"PickFlow: downloading {item.get('id')}",
+                          flush=True)
                     data = self.client.download(item["baseUrl"])
+                    print(f"PickFlow: downloaded {len(data)} bytes",
+                          flush=True)
                     ext = ".jpg" if "jpeg" in item["mimeType"] else ".png"
                     name = item["id"] + ext
                     if self.blob_store is not None:
