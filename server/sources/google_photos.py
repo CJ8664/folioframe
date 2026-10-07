@@ -319,22 +319,25 @@ class PickFlow:
                 for item in resp.get("mediaItems", []):
                     if count >= self.max_items:
                         break
-                    mt = item.get("mimeType", "")
-                    # Google sometimes omits mimeType; only skip if it's
-                    # explicitly a non-image (e.g. video/*).
+                    # Picker API nests file details under item["mediaFile"]:
+                    # {id, createTime, type, mediaFile: {baseUrl, mimeType,
+                    #  filename, mediaFileMetadata}}. Top-level baseUrl/
+                    # mimeType do not exist.
+                    mf = item.get("mediaFile") or {}
+                    mt = mf.get("mimeType", "")
+                    # Only skip when mimeType is explicitly non-image
+                    # (e.g. video/*); empty means unknown, try anyway.
                     if mt and not mt.startswith("image/"):
                         continue  # photo frame: images only
-                    base_url = item.get("baseUrl")
+                    base_url = mf.get("baseUrl")
                     if not base_url:
-                        # Item not ready or API changed; skip gracefully
-                        # instead of crashing with KeyError.
                         continue
                     data = self.client.download(base_url)
                     ext = ".jpg" if "jpeg" in mt else ".png"
                     name = item["id"] + ext
                     if self.blob_store is not None:
                         self.blob_store.put(self.blob_prefix + name, data,
-                                            item["mimeType"])
+                                            mt or "image/jpeg")
                     else:
                         with open(os.path.join(self.cache_dir, name),
                                   "wb") as f:

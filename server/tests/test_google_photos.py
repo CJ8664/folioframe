@@ -200,10 +200,14 @@ class TestPickFlow(unittest.TestCase):
                   "pollingConfig": {"pollInterval": "0s", "timeoutIn": "5s"}},
                  {"mediaItemsSet": True}],
                 [{"mediaItems": [
-                    {"id": "p1", "mimeType": "image/jpeg",
-                     "baseUrl": "https://x/p1"},
-                    {"id": "v1", "mimeType": "video/mp4",
-                     "baseUrl": "https://x/v1"},
+                    {"id": "p1", "type": "TYPE_IMAGE",
+                     "mediaFile": {"baseUrl": "https://x/p1",
+                                   "mimeType": "image/jpeg",
+                                   "filename": "p1.jpg"}},
+                    {"id": "v1", "type": "TYPE_VIDEO",
+                     "mediaFile": {"baseUrl": "https://x/v1",
+                                   "mimeType": "video/mp4",
+                                   "filename": "v1.mp4"}},
                 ]}, {}])
             n = flow.run("sess1", poll=lambda s: None)
             self.assertEqual(n, 1)
