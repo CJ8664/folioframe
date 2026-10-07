@@ -61,12 +61,19 @@ from io import BytesIO
 from PIL import Image
 
 import pipeline
+import logging
 import sources.folder  # noqa: F401  (registers)
 import sources.picsum  # noqa: F401
 import sources.url  # noqa: F401
 import sources.dashboard  # noqa: F401
 import sources.google_photos  # noqa: F401
 import sources.uploads  # noqa: F401  (registers UploadsSource)
+
+logger = logging.getLogger("folioframe")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 from sources import SOURCES
 from sources.google_photos import (GPhotosController, PickerClient, PickFlow)
 from auth import AuthManager, AuthError, SESSION_COOKIE
@@ -143,7 +150,7 @@ class Server:
         if not os.path.exists(cfg_path):
             with open(cfg_path, "w") as f:
                 json.dump(DEFAULT_CONFIG, f, indent=2)
-            print(f"wrote default {cfg_path}")
+            logger.info(f"wrote default {cfg_path}")
         with open(cfg_path) as f:
             self.cfg = json.load(f)
         # Cloud Run: full config via env (values can come from Secret Manager).
@@ -410,7 +417,7 @@ class Server:
             try:
                 self._rotate_device(dev)
             except Exception as e:
-                print(f"switch_source rotate {dev['device_id']}: {e}")
+                logger.warning(f"switch_source rotate {dev['device_id']}: {e}")
 
     def gphotos_pick(self, sub):
         """Create a picker session and import in the background (per user)."""
@@ -467,7 +474,7 @@ class Server:
         hist.append(item)
         self.state["history"][hist_key] = hist[-200:]
         self._save_state()
-        print(f"rotated: {dev['device_id']} {name}/{item}")
+        logger.info(f"rotated: {dev['device_id']} {name}/{item}")
 
     def _frame_due(self, dev):
         slot = self._frames.get(dev["device_id"])
@@ -485,7 +492,7 @@ class Server:
                 if self._frame_due(dev):
                     self._rotate_device(dev)
             except Exception as e:
-                print(f"tick rotate {dev.get('device_id')}: {e}")
+                logger.warning(f"tick rotate {dev.get('device_id')}: {e}")
 
     def device_frame(self, dev):
         """(frame_bytes, etag): pinned override wins, else the device's own
@@ -501,13 +508,13 @@ class Server:
             try:
                 self._rotate_device(dev)
             except Exception as e:
-                print("first-frame rotate error:", e)
+                logger.error(f"first-frame rotate error: {e}")
                 return None, None
         elif not self._in_quiet_now() and self._frame_due(dev):
             try:
                 self._rotate_device(dev)
             except Exception as e:  # keep serving the old frame
-                print("lazy tick error:", e)
+                logger.error(f"lazy tick error: {e}")
         etag = dev.get("override_etag")
         if etag:
             data = self.blobs.get(
@@ -711,9 +718,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if ("application/x-www-form-urlencoded" in ctype and
                     0 < length <= 65536):
                 try:
-                    body = self.rfile.read(length).decode()
+                    raw_body = self.rfile.read(length)
+                    # Buffer for _read_json() in case the handler needs it.
+                    # (Form submissions don't use _read_json, but this prevents
+                    # a hang if they do.)
+                    self._buffered_body = raw_body
+                    body = raw_body.decode()
                 except (UnicodeDecodeError, ValueError):
                     body = ""
+                    self._buffered_body = b""
                 token = urllib.parse.parse_qs(body).get("csrf", [""])[0]
         if not APP.auth.check_csrf(sess, token):
             self._json(403, {"ok": False, "error": "bad csrf token"})
@@ -1143,7 +1156,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     # Never echo provider exception details to the browser
                     # (they can contain response bodies); log server-side.
-                    print(f"gphotos OAuth exchange failed for {sub}: "
+                    logger.error(f"gphotos OAuth exchange failed for {sub}: "
                           f"{type(e).__name__}")
                     self._send(500, "text/plain",
                                b"connect failed: please try again")
@@ -2433,13 +2446,13 @@ def main():
             try:
                 APP.tick()
             except Exception as e:
-                print("tick error:", e)
+                logger.error(f"tick error: {e}")
 
     threading.Thread(target=ticker, daemon=True).start()
     # Cloud Run injects $PORT; local runs use config.json.
     port = int(os.environ.get("PORT", APP.cfg.get("port", 8765)))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"SpectraFrame server v2.2 on :{port} (frame {W}x{H})")
+    logger.info(f"SpectraFrame server v2.2 on :{port} (frame {W}x{H})")
     srv.serve_forever()
 
 
