@@ -843,6 +843,8 @@ h2 { font-size: clamp(1.25rem, 1.05rem + 1vw, 1.6rem); }
   color: var(--text);
 }
 .hint-pop[hidden] { display: none; }
+.hint-pop:not([hidden]) { animation: hint-in .16s ease; }
+@keyframes hint-in { from { opacity: 0; } }
 .hint-wrap .hint-pop--below { top: calc(100% + 8px); bottom: auto; }
 .hint-wrap .hint-pop--left { left: 0; transform: none; }
 

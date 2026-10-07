@@ -1460,26 +1460,55 @@ if('serviceWorker' in navigator){
 """
 HINT_JS = """
 <script>
-/* "?" hint popovers (shared): one open at a time; delegated for dynamic content. */
+/* "?" hints behave like tooltips (shared): hover/focus reveals on desktop,
+   tap toggles on touch screens; delegated so it covers dynamic content. */
 (function(){
-  function closeHints(){
+  var canHover = window.matchMedia('(hover: hover)').matches;
+  function popOf(b){ return b.parentElement.querySelector('.hint-pop'); }
+  function hintOf(t){ return t&&t.closest?t.closest('.hint'):null; }
+  function closeAll(except){
     Array.prototype.forEach.call(
-      document.querySelectorAll('.hint[aria-expanded="true"]'), function(b){
-        b.setAttribute('aria-expanded','false');
-        var p=b.parentElement.querySelector('.hint-pop');
-        if(p) p.hidden=true;
+      document.querySelectorAll('.hint[aria-expanded="true"]'), function(o){
+        if(o===except) return;
+        o.setAttribute('aria-expanded','false');
+        var q=popOf(o); if(q) q.hidden=true;
       });
   }
+  function open(b){
+    closeAll(b);
+    var q=popOf(b); if(q) q.hidden=false;
+    b.setAttribute('aria-expanded','true');
+  }
+  function close(b){
+    var q=popOf(b); if(q) q.hidden=true;
+    b.setAttribute('aria-expanded','false');
+  }
+  if(canHover){
+    document.addEventListener('mouseover',function(e){
+      var b=hintOf(e.target); if(b) open(b);
+    });
+    document.addEventListener('mouseout',function(e){
+      var b=hintOf(e.target); if(!b) return;
+      var rt=e.relatedTarget;
+      if(rt && b.parentElement.contains(rt)) return;
+      close(b);
+    });
+    document.addEventListener('focusin',function(e){
+      var b=hintOf(e.target); if(b) open(b);
+    });
+    document.addEventListener('focusout',function(e){
+      var b=hintOf(e.target); if(b) close(b);
+    });
+  }
   document.addEventListener('click',function(e){
-    var b=e.target&&e.target.closest?e.target.closest('.hint'):null;
-    if(!b){closeHints();return;}
-    e.stopPropagation();
-    var p=b.parentElement.querySelector('.hint-pop');
-    if(!p) return;
-    var willOpen=p.hidden;
-    closeHints();
-    p.hidden=!willOpen;
-    b.setAttribute('aria-expanded',String(willOpen));
+    var b=hintOf(e.target);
+    if(!b){ closeAll(null); return; }
+    if(!canHover){
+      if(b.getAttribute('aria-expanded')==='true') close(b); else open(b);
+    }
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape') closeAll(null);
   });
 })();
 </script>
@@ -1505,7 +1534,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <p class='tag'>Your memories, floating on glass.</p>
     <div id='gbtn'></div>
     <p id='err' class='err'></p>
-    <p class='fine'>Takes about 30 seconds. We never see your Google password.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About sign-in'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Sign-in happens in Google’s own popup. FolioFrame only receives a basic profile token — never your password.</span></span><br>
+    <p class='fine'>Takes about 30 seconds. We never see your Google password.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About sign-in'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Sign-in happens in Google’s own popup. FolioFrame only receives a basic profile token — never your password.</span></span><br>
     <span id='https-note' style='display:none'>Heads up: Google sign-in needs
     this page over HTTPS (or localhost).</span></p>
   </div>
@@ -1526,7 +1555,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   <div class='card installbar' id='installcard'>
     <div style='flex:1'><b>Install FolioFrame</b><br>
     <span class='muted'>Add it to your home screen for the full app feel.</span></div>
-    <button class='btn sm' id='installbtn' style='display:none'>Install app</button><span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About installing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Adds the FolioFrame console to your home screen so it opens like a native app.</span></span>
+    <button class='btn sm' id='installbtn' style='display:none'>Install app</button><span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About installing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Adds the FolioFrame console to your home screen so it opens like a native app.</span></span>
   </div>
   <div class='card' style='text-align:center'>
     <span class='muted'>Setting up a new frame?</span><br>
@@ -1605,7 +1634,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
       <h2>Your photos</h2>
       <span id='photoCount'></span>
     </div>
-    <p class='sub'>Tap a photo to preview it on simulated e-ink, or edit it for your frame.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the photo picker'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>These are the photos your frames draw from. Edits replace the photo here, so the frame picks up the edited version on its next rotation.</span></span></p>
+    <p class='sub'>Tap a photo to preview it on simulated e-ink, or edit it for your frame.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the photo picker'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>These are the photos your frames draw from. Edits replace the photo here, so the frame picks up the edited version on its next rotation.</span></span></p>
     <div class='photo-grid' id='photoGrid' aria-label='Your photos'></div>
     <p class='photo-empty' id='photoEmpty' hidden></p>
   </div>
@@ -1625,7 +1654,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
         <div class='preview-media'><img id='previewOriginal' src='' alt='Original selected photo'></div>
       </figure>
       <figure class='preview-figure'>
-        <figcaption class='preview-label'><span class='preview-label-main'>E-ink preview &mdash; simulated<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the simulated e-ink preview'>?</button><span class='hint-pop hint-pop--below' role='note' hidden>An approximation of how this photo will look on the frame's six-color e-paper display. Real e-paper shows softer colors and less fine detail than your phone or computer screen.</span></span></span><span>1200 &times; 1600 fit</span></figcaption>
+        <figcaption class='preview-label'><span class='preview-label-main'>E-ink preview &mdash; simulated<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the simulated e-ink preview'>?</button><span class='hint-pop hint-pop--below' role='tooltip' hidden>An approximation of how this photo will look on the frame's six-color e-paper display. Real e-paper shows softer colors and less fine detail than your phone or computer screen.</span></span></span><span>1200 &times; 1600 fit</span></figcaption>
         <div class='preview-media'>
           <canvas id='einkCanvas' width='360' height='480' aria-label='Simulated six-color e-ink rendering'></canvas>
           <div class='render-state' id='renderState' role='status' aria-live='polite'>Rendering preview&hellip;</div>
@@ -1638,7 +1667,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <div class='editor-shell' id='editorShell' aria-hidden='true'>
   <section class='editor-panel' role='dialog' aria-modal='true' aria-labelledby='editorTitle'>
     <div class='editor-head'>
-      <div><h2 id='editorTitle'>Edit for your frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About editing photos for your frame'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>A final framing pass before a photo reaches your frame. Drag to reposition, use the sliders for zoom, brightness, and contrast, and rotate in 90&deg; steps &mdash; the 3:4 crop itself never changes, so the frame always fills edge to edge.</span></span></h2><p id='editorName'>Selected photo</p></div>
+      <div><h2 id='editorTitle'>Edit for your frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About editing photos for your frame'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>A final framing pass before a photo reaches your frame. Drag to reposition, use the sliders for zoom, brightness, and contrast, and rotate in 90&deg; steps &mdash; the 3:4 crop itself never changes, so the frame always fills edge to edge.</span></span></h2><p id='editorName'>Selected photo</p></div>
       <button class='iconbtn' id='editorClose' type='button' aria-label='Cancel and close editor'>&times;</button>
     </div>
     <div class='editor-layout'>
@@ -1646,7 +1675,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
         <div class='crop-stage' id='cropStage' aria-label='3 by 4 crop preview. Drag to reposition the photo.'>
           <canvas class='editor-canvas' id='editorCanvas' width='360' height='480' tabindex='0'></canvas>
           <div class='crop-frame' aria-hidden='true'><span class='frame-cols'></span></div>
-          <span class='full-bleed-badge'>3:4 &middot; fills the whole frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About filling the whole frame'>?</button><span class='hint-pop hint-pop--left' role='note' hidden>The frame's screen is 3:4, so your photo always fills it edge to edge &mdash; no black bars. Drag or zoom to reframe; the crop shape itself stays fixed.</span></span></span>
+          <span class='full-bleed-badge'>3:4 &middot; fills the whole frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About filling the whole frame'>?</button><span class='hint-pop hint-pop--left' role='tooltip' hidden>The frame's screen is 3:4, so your photo always fills it edge to edge &mdash; no black bars. Drag or zoom to reframe; the crop shape itself stays fixed.</span></span></span>
         </div>
       </div>
       <div class='editor-controls'>
@@ -1867,7 +1896,7 @@ esp-web-install-button{--esp-tools-button-color:var(--accent);
     <a class='btn ghost sm' href='/'>Home</a>
   </div></div>
   <div class='card hero'>
-    <h1>Flash the frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About flashing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Installs FolioFrame firmware on the EE02 driver board over USB, right from this page. No login needed.</span></span></h1>
+    <h1>Flash the frame<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About flashing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Installs FolioFrame firmware on the EE02 driver board over USB, right from this page. No login needed.</span></span></h1>
     <p class='tag'>Install FolioFrame firmware over USB, right from
     this page. No login needed.</p>
   </div>""" + body + """
@@ -1895,12 +1924,12 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 </div></header>
 <main class='sheet sheet-wide'>
   <div class='card' id='photos-card'>
-    <h2>Google Photos<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About Google Photos'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>Your frame’s photo library. Connect once, then pick the photos you love.</span></span></h2>
+    <h2>Google Photos<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About Google Photos'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Your frame’s photo library. Connect once, then pick the photos you love.</span></span></h2>
     <p class='sub' id='photos-sub'>Your frame's photo library.</p>
     <div id='photos'><p class='muted'>Loading&hellip;</p></div>
   </div>
   <div class='card'>
-    <h2>Photo source<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About photo source'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>What your frames show right now. Switch sources anytime — frames pick it up at their next wake.</span></span></h2>
+    <h2>Photo source<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About photo source'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>What your frames show right now. Switch sources anytime — frames pick it up at their next wake.</span></span></h2>
     <p class='sub'>What your frames show right now.</p>
     <div class='seg' id='src' role='tablist' aria-label='Photo source'></div>
     <div class='btnrow'>
@@ -2041,9 +2070,9 @@ async function renderDevices(){
     return `
     <div class='dev'>
       <span class='nm'>${esc(dev.name||'Frame')}</span><br>
-      <span class='meta'>${esc(dev.device_id)}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the device ID'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>The frame’s unique ID, also shown on its setup screen.</span></span></span><br>
+      <span class='meta'>${esc(dev.device_id)}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the device ID'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>The frame’s unique ID, also shown on its setup screen.</span></span></span><br>
       <span class='meta'>Last seen: ${dev.last_seen?new Date(dev.last_seen*1000).toLocaleString():'never'}
-      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}${fwBadge}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About frame status'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>When the frame last checked in, its battery level, and the installed firmware version.</span></span></span>
+      &middot; Battery: ${esc(dev.battery_pct??'&mdash;')}% &middot; Firmware: ${esc(dev.fw??'&mdash;')}${fwBadge}<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About frame status'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>When the frame last checked in, its battery level, and the installed firmware version.</span></span></span>
       ${dev.override?'<p><b>&#x1F4CC; Pinned photo active</b> <button class="btn ghost sm" onclick="clearOv(\\''+dev.device_id+'\\')">Clear</button></p>':''}
       <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
@@ -2107,7 +2136,7 @@ form .btn{width:100%;margin-top:14px}
   <div class='card' style='text-align:center;margin-top:8vh'>
     <img src='/static/icon-192.png' alt='' style='width:64px;height:64px;border-radius:18px'>
     <h2 style='margin-top:12px'>Pair a frame</h2>
-    <p class='sub'>Enter the 8-character code shown on the frame's screen.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the pairing code'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='note' hidden>The code appears on the frame’s screen after it connects to Wi-Fi. It expires after a few minutes.</span></span></p>
+    <p class='sub'>Enter the 8-character code shown on the frame's screen.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About the pairing code'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>The code appears on the frame’s screen after it connects to Wi-Fi. It expires after a few minutes.</span></span></p>
     <form onsubmit='return pair(event)'>
       <input id='code' class='code' placeholder='XXXX-XXXX' autocomplete='off'
         autocapitalize='characters' maxlength='9' aria-label='Pairing code'>

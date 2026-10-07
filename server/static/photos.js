@@ -70,25 +70,7 @@
   function thumbUrl(id) { return '/api/photos/' + encodeURIComponent(id) + '/thumb'; }
   function fullUrl(id) { return '/api/photos/' + encodeURIComponent(id) + '/full'; }
 
-  /* ---------- "?" hint popovers: one open at a time ---------- */
-  function closeHints() {
-    Array.prototype.forEach.call(document.querySelectorAll('.hint'), function (button) {
-      button.setAttribute('aria-expanded', 'false');
-      var pop = button.parentElement.querySelector('.hint-pop');
-      if (pop) pop.hidden = true;
-    });
-  }
-  Array.prototype.forEach.call(document.querySelectorAll('.hint'), function (button) {
-    button.addEventListener('click', function (event) {
-      event.stopPropagation();
-      var pop = button.parentElement.querySelector('.hint-pop');
-      var willOpen = pop.hidden;
-      closeHints();
-      pop.hidden = !willOpen;
-      button.setAttribute('aria-expanded', String(willOpen));
-    });
-  });
-  document.addEventListener('click', closeHints);
+  /* Hint tooltips are handled by the shared HINT_JS snippet. */
 
   /* ---------- photo list ---------- */
   function prettyName(id) {
