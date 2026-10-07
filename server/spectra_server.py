@@ -1986,9 +1986,15 @@ def _flash_page(available, version, versions):
       <div class='card'>
         <h3>Flash console</h3>
         <div id='console-wrap'>
-          <p class='muted' id='console-idle'>Idle — pick a version and hit
-          <b>Connect &amp; flash</b>. Port selection, erase, write, verify
-          and the log all appear here.</p>
+          <p class='flash-status' id='flash-status'>Idle — pick a version and hit
+          <b>Connect &amp; Flash</b>.</p>
+          <div id='flash-progress-wrap' hidden>
+            <div class='flash-progress-track'>
+              <div class='flash-progress-bar' id='flash-progress-bar'></div>
+            </div>
+            <p class='flash-progress-label' id='flash-progress-label'></p>
+          </div>
+          <div class='flash-log' id='flash-log'></div>
         </div>
       </div>
       <div class='card'>
@@ -2000,45 +2006,8 @@ def _flash_page(available, version, versions):
       </div>
     </div>
   </div>
-  <script type='module'>
-  import('/static/esp-web-tools/install-dialog.js');
-  (function(){{
-    var go=document.getElementById('flash-go');
-    var sel=document.getElementById('fwver');
-    var wrap=document.getElementById('console-wrap');
-    function manifestUrl(){{
-      var v=sel?sel.value:'{version}';
-      return '/flash/manifest.json?version='+encodeURIComponent(v);
-    }}
-    if(sel) sel.addEventListener('change',function(){{
-      // If a dialog is already open, swap its manifest for the next run.
-      var dlg=wrap.querySelector('ewt-install-dialog');
-      if(dlg) dlg.manifestPath=manifestUrl();
-    }});
-    go.addEventListener('click',async function(){{
-      if(!('serial' in navigator)){{
-        wrap.innerHTML='<p class=\"err\">Web Serial is not available. Use Chrome, Edge or Opera on a computer (HTTPS required).</p>';
-        return;
-      }}
-      var port;
-      try{{ port=await navigator.serial.requestPort(); }}
-      catch(e){{ return; }}  // user cancelled the port picker
-      try{{ await port.open({{baudRate:115200,bufferSize:8192}}); }}
-      catch(e){{
-        wrap.innerHTML='<p class=\"err\">Could not open the serial port: '+e.message+'</p>';
-        return;
-      }}
-      wrap.innerHTML='';
-      var dlg=document.createElement('ewt-install-dialog');
-      dlg.port=port;
-      dlg.manifestPath=manifestUrl();
-      dlg.addEventListener('closed',function(){{
-        try{{port.close();}}catch(e){{}}
-      }},{{once:true}});
-      wrap.appendChild(dlg);
-    }});
-  }})();
-  </script>"""
+  <script src='/static/esptool-js-bundle.js'></script>
+  <script src='/static/inline-flasher.js'></script>"""
     else:
         body = """
   <div class='card' style='text-align:center'>

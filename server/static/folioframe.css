@@ -1011,3 +1011,45 @@ h2 { font-size: clamp(1.25rem, 1.05rem + 1vw, 1.6rem); }
   -webkit-backdrop-filter: blur(8px);
 }
 .updel:hover { background: rgba(160, 40, 30, .78); }
+
+/* Inline flasher UI (replaces ewt-install-dialog modal) */
+.flash-status { margin: 0 0 12px; }
+.flash-status.err { color: var(--danger, #b3261e); font-weight: 600; }
+.flash-status.ok { color: var(--success, #3f6b4f); font-weight: 600; }
+.flash-status.muted { color: var(--muted, #69685d); }
+
+.flash-progress-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--line, #d8cdbc);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.flash-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 5px;
+  background: var(--clay, #c1663e);
+  transition: width 0.2s ease;
+}
+.flash-progress-label {
+  font-size: 13px;
+  color: var(--muted, #69685d);
+  margin: 0 0 12px;
+}
+
+.flash-log {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: #1c1a18;
+  color: #e8e0d0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  max-height: 380px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.flash-log:empty { display: none; }
+.flash-log-line { margin: 0; }
