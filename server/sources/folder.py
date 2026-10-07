@@ -37,3 +37,32 @@ class FolderSource(Source):
         d = super().describe()
         d.update(dir=self.dir, count=len(self._ids()))
         return d
+
+    def save(self, item_id, data):
+        """Replace a photo's bytes (e.g. after user edit)."""
+        # Validate item_id to prevent path traversal
+        if not item_id or "/" in item_id or "\\" in item_id or item_id.startswith("."):
+            raise ValueError("invalid item_id")
+        path = os.path.join(self.dir, item_id)
+        # Ensure the path is within self.dir
+        if not os.path.abspath(path).startswith(os.path.abspath(self.dir)):
+            raise ValueError("invalid item_id")
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def get_metadata(self, item_id):
+        """Return basic file metadata, or None if not found."""
+        try:
+            path = os.path.join(self.dir, item_id)
+            if not os.path.exists(path):
+                return None
+            st = os.stat(path)
+            return {
+                "id": item_id,
+                "filename": item_id,
+                "size": st.st_size,
+                "modified": int(st.st_mtime),
+                "source": self.name,
+            }
+        except Exception:
+            return None

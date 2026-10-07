@@ -66,6 +66,7 @@ import sources.picsum  # noqa: F401
 import sources.url  # noqa: F401
 import sources.dashboard  # noqa: F401
 import sources.google_photos  # noqa: F401
+import sources.uploads  # noqa: F401  (registers UploadsSource)
 from sources import SOURCES
 from sources.google_photos import (GPhotosController, PickerClient, PickFlow)
 from auth import AuthManager, AuthError, SESSION_COOKIE

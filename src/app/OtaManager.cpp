@@ -95,12 +95,14 @@ bool OtaManager::flashFirmware(const char* url, const char* token,
     return false;
   }
   if (manifest.hasMd5) {
-    uint8_t md5[16];
-    for (int i = 0; i < 16; i++) {
-      char byte[3] = {manifest.md5[2 * i], manifest.md5[2 * i + 1], 0};
-      md5[i] = (uint8_t)strtoul(byte, nullptr, 16);
+    // Update.setMD5() expects a 32-char hex string, not binary bytes.
+    // manifest.md5 is already validated as 32 lowercase hex chars by
+    // the OtaManifest parser.
+    if (!Update.setMD5(manifest.md5.c_str())) {
+      lastError_ = "Update.setMD5 failed";
+      http.end();
+      return false;
     }
-    Update.setMD5((const char*)md5);
   }
   // Chunked write (instead of Update.writeStream) so the UI can report
   // progress. Feeds the same Update MD5 context, so verification is
