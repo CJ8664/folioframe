@@ -319,10 +319,13 @@ class PickFlow:
                 for item in resp.get("mediaItems", []):
                     if count >= self.max_items:
                         break
-                    if not item.get("mimeType", "").startswith("image/"):
+                    mt = item.get("mimeType", "")
+                    # Google sometimes omits mimeType; only skip if it's
+                    # explicitly a non-image (e.g. video/*).
+                    if mt and not mt.startswith("image/"):
                         continue  # photo frame: images only
                     data = self.client.download(item["baseUrl"])
-                    ext = ".jpg" if "jpeg" in item["mimeType"] else ".png"
+                    ext = ".jpg" if "jpeg" in mt else ".png"
                     name = item["id"] + ext
                     if self.blob_store is not None:
                         self.blob_store.put(self.blob_prefix + name, data,
