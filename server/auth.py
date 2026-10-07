@@ -91,10 +91,26 @@ class AuthManager:
         client_id = self.client_id
         if not client_id or not CLIENT_ID_RE.fullmatch(client_id):
             raise AuthError("server Google sign-in is not configured")
-        try:
-            info = self._verify(id_token_str, client_id)
-        except Exception as e:
-            raise AuthError(f"token verification failed: {e}")
+        # Retry transient network errors (DNS blips, timeouts) — the
+        # Google certs fetch can fail intermittently in Docker.
+        info = None
+        last_err = None
+        for attempt in range(4):
+            try:
+                info = self._verify(id_token_str, client_id)
+                break
+            except Exception as e:
+                last_err = e
+                msg = str(e).lower()
+                transient = any(k in msg for k in (
+                    "nameresolution", "temporary failure",
+                    "max retries exceeded", "connection",
+                    "timeout", "timed out"))
+                if not transient or attempt == 3:
+                    raise AuthError(f"token verification failed: {e}")
+                time.sleep(1.5 * (attempt + 1))
+        if info is None:
+            raise AuthError(f"token verification failed: {last_err}")
         # Defense in depth: assert the security-critical claims explicitly so
         # a verifier swap can't silently drop them.
         if info.get("aud") != client_id:
