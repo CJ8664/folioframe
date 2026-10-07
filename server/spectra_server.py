@@ -1583,7 +1583,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
   <div class='card installbar' id='installcard'>
     <div style='flex:1'><b>Install FolioFrame</b><br>
     <span class='muted'>Add it to your home screen for the full app feel.</span></div>
-    <button class='btn sm' id='installbtn' style='display:none'>Install app</button><span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About installing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Adds the FolioFrame console to your home screen so it opens like a native app.</span></span>
+    <button class='btn btn-ghost btn-sm' id='installbtn' style='display:none'>Install app</button><span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About installing'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Adds the FolioFrame console to your home screen so it opens like a native app.</span></span>
   </div>
   <div class='card' style='text-align:center'>
     <span class='muted'>Setting up a new frame?</span><br>
@@ -1733,7 +1733,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
       </div>
     </div>
     <div class='editor-actions'>
-      <button class='btn ghost' id='editorCancel' type='button'>Cancel</button>
+      <button class='btn btn-ghost' id='editorCancel' type='button'>Cancel</button>
       <button class='btn btn-primary' id='editorApply' type='button'>Apply edit</button>
     </div>
     <p class='editor-status' id='editorStatus' role='status'></p>
@@ -2035,7 +2035,7 @@ async function renderPhotos(){
       ${st}
       <div class='btnrow'>
         <button class='btn btn-primary' onclick='gpick()'>Pick more photos</button>
-        <button class='btn ghost' onclick='gdisc()'>Disconnect</button>
+        <button class='btn btn-ghost' onclick='gdisc()'>Disconnect</button>
       </div>
       <p class='msg' id='photos-msg'></p>`;
     if(g.picking) pollPick();
@@ -2111,7 +2111,7 @@ async function renderDevices(){
       <img src='/api/devices/${dev.device_id}/preview' alt='What this frame is showing now' loading='lazy'>
       <form onsubmit='return upload(event,"${dev.device_id}")'>
         <input type='file' name='photo' accept='image/*' required aria-label='Photo to push'>
-        <button class='btn sm'>Push photo to frame</button>
+        <button class='btn btn-ghost btn-sm'>Push photo to frame</button>
       </form>
       <p class='muted'>Pushing pins the photo immediately; the frame shows it at its next wake.</p>
       <div class='btnrow'>
