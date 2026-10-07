@@ -2412,6 +2412,10 @@ async function pair(e){
   document.getElementById('msg').textContent=
     r.ok?('Paired: '+(r.name||r.device_id)):('Error: '+(r.error||'unknown error'));
   document.getElementById('msg').className='msg '+(r.ok?'ok':'err');
+  if(r.ok){
+    // Redirect to home after successful pairing
+    setTimeout(function(){ window.location.href='/'; }, 1500);
+  }
   return false;
 }
 </script>
