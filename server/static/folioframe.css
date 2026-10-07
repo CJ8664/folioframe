@@ -972,3 +972,42 @@ h2 { font-size: clamp(1.25rem, 1.05rem + 1vw, 1.6rem); }
 .editor-actions .btn { min-width: 104px; }
 .editor-status { margin: 10px 0 0; font-size: 13px; color: var(--text-secondary); }
 .editor-status.err { color: var(--error); }
+
+/* ---------- uploads grid ---------- */
+.upgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+.upitem {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-subtle);
+}
+.upitem img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.updel {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: rgba(20, 18, 14, .62);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.updel:hover { background: rgba(160, 40, 30, .78); }

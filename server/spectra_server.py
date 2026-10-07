@@ -51,6 +51,7 @@ import http.server
 import hashlib
 import json
 import os
+import uuid
 import re
 import threading
 import time
@@ -288,6 +289,12 @@ class Server:
             return name
         return None
 
+    def uploads_dir(self, sub):
+        """Per-user uploads directory (created on demand)."""
+        d = os.path.join(self.data_dir, "users", sub, "uploads")
+        os.makedirs(d, exist_ok=True)
+        return d
+
     def photos_for(self, sub):
         """Per-user Google Photos controller (shared service OAuth client).
 
@@ -322,6 +329,14 @@ class Server:
     def _user_source(self, sub, name):
         if name == "google_photos":
             return self.photos_for(sub).source
+        if name == "uploads":
+            key = f"uploads:{sub}"
+            src = self._shared_sources.get(key)
+            if src is None:
+                src = self._shared_sources[key] = SOURCES["uploads"]({
+                    "dir": os.path.join(self.data_dir, "users", sub,
+                                        "uploads")})
+            return src
         src = self._shared_sources.get(name)
         if src is None:
             src = self._shared_sources[name] = self._make_source(name)
@@ -1076,6 +1091,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                b"connect failed: please try again")
             return
 
+        if p == "/api/uploads":
+            got = self._require_human()
+            if not got:
+                return
+            _, _, sub = got
+            d = APP.uploads_dir(sub)
+            items = []
+            for f in sorted(os.listdir(d)):
+                if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp",
+                                       ".bmp")):
+                    items.append({"name": f,
+                                  "url": f"/api/uploads/file/{f}"})
+            self._json(200, {"ok": True, "photos": items})
+            return
+
+        if p.startswith("/api/uploads/file/"):
+            got = self._require_human()
+            if not got:
+                return
+            _, _, sub = got
+            name = p[len("/api/uploads/file/"):]
+            if (not name or "/" in name or name.startswith(".") or
+                    ".." in name):
+                self._json(404, {"ok": False})
+                return
+            path = os.path.join(APP.uploads_dir(sub), name)
+            if not os.path.isfile(path):
+                self._json(404, {"ok": False})
+                return
+            ctype = {".png": "image/png", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".webp": "image/webp",
+                     ".bmp": "image/bmp"}.get(
+                os.path.splitext(name)[1].lower(), "application/octet-stream")
+            with open(path, "rb") as f:
+                self._send(200, ctype, f.read(),
+                           {"Cache-Control": "private, max-age=3600"})
+            return
+
         if p == "/api/gphotos/status":
             got = self._require_human()
             if not got:
@@ -1251,6 +1304,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                      "next wake"})
             return
 
+        if p == "/api/uploads":
+            got = self._require_human()
+            if not got or not self._require_csrf(got[1]):
+                return
+            _, _, sub = got
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                length = 0
+            if length <= 0 or length > 25 * 1024 * 1024:
+                self._json(400, {"ok": False,
+                                 "error": "photo too large (max 25 MB)"})
+                return
+            body = self.rfile.read(length) if length else b""
+            parts = _parse_multipart(body,
+                                     self.headers.get("Content-Type", ""))
+            saved = []
+            d = APP.uploads_dir(sub)
+            for field, (fname, data) in parts.items():
+                if not data:
+                    continue
+                try:
+                    img = Image.open(BytesIO(data)).convert("RGB")
+                except Exception:
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+                    ext = ".jpg"
+                name = f"{uuid.uuid4().hex}{ext}"
+                # Re-encode to strip metadata and normalize.
+                img.save(os.path.join(d, name))
+                saved.append(name)
+            if not saved:
+                self._json(400, {"ok": False,
+                                 "error": "no readable images uploaded"})
+                return
+            self._json(200, {"ok": True, "saved": saved,
+                             "count": len(saved)})
+            return
+
         if p == "/api/gphotos/pick":
             got = self._require_human()
             if not got or not self._require_csrf(got[1]):
@@ -1361,6 +1454,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_DELETE(self):
+        p = urllib.parse.urlparse(self.path).path
+        if p.startswith("/api/uploads/"):
+            got = self._require_human()
+            if not got or not self._require_csrf(got[1]):
+                return
+            _, _, sub = got
+            name = p[len("/api/uploads/"):]
+            if (not name or "/" in name or name.startswith(".") or
+                    ".." in name):
+                self._json(404, {"ok": False})
+                return
+            path = os.path.join(APP.uploads_dir(sub), name)
+            if os.path.isfile(path):
+                os.remove(path)
+                self._json(200, {"ok": True})
+            else:
+                self._json(404, {"ok": False})
+            return
         dev_id, rest = self._device_id_from_path("/api/devices/")
         if not dev_id:
             self.send_response(404)
@@ -1951,6 +2062,17 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     aria-label='Sign out'>&#x23FB;</button>
 </div></header>
 <main class='sheet sheet-wide'>
+  <div class='card'>
+    <h2>My uploads<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About uploads'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Photos you upload here are stored on your server and can be shown on your frames. No frame needs to be paired first.</span></span></h2>
+    <p class='sub'>Your personal photo library on this server.</p>
+    <div id='uploads' class='upgrid'><p class='muted'>Loading&hellip;</p></div>
+    <form onsubmit='return upUpload(event)'>
+      <input type='file' name='photo' accept='image/*' multiple required
+        aria-label='Photos to upload'>
+      <button class='btn btn-primary btn-sm'>Upload photos</button>
+    </form>
+    <p class='msg' id='uploads-msg'></p>
+  </div>
   <div class='card' id='photos-card'>
     <h2>Google Photos<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About Google Photos'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Your frame’s photo library. Connect once, then pick the photos you love.</span></span></h2>
     <p class='sub' id='photos-sub'>Your frame's photo library.</p>
@@ -1980,7 +2102,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 </main>
 <script>
 let CSRF='';
-const SRC_NAMES={dashboard:'Daily dashboard',folder:'Photo folder',
+const SRC_NAMES={dashboard:'Daily dashboard',folder:'Photo folder',uploads:'My uploads',
 google_photos:'Google Photos',picsum:'Sample photos',url:'Web image'};
 function srcName(n){return SRC_NAMES[n]||n;}
 async function api(m,u,b,form){
@@ -2000,7 +2122,7 @@ async function init(){
   const av=document.getElementById('avatar');
   av.textContent=(a.email||'?').trim().charAt(0).toUpperCase()||'?';
   av.title=a.email||'';
-  renderDevices();renderSources(a);renderPhotos();
+  renderDevices();renderSources(a);renderPhotos();renderUploads();
 }
 /* ---------- Google Photos ---------- */
 async function renderPhotos(){
@@ -2066,6 +2188,43 @@ async function pollPick(){
 async function gdisc(){
   if(!confirm('Disconnect Google Photos? Your chosen photos stay on this server until you pick again.'))return;
   await api('POST','/api/gphotos/disconnect');renderPhotos();
+}
+/* ---------- uploads ---------- */
+async function renderUploads(){
+  const el=document.getElementById('uploads');
+  const r=await (await fetch('/api/uploads')).json();
+  if(!r.ok||!r.photos.length){
+    el.innerHTML=`<p class='muted'>No uploads yet — pick some photos below.</p>`;
+    return;
+  }
+  el.innerHTML=r.photos.map(p=>`
+    <div class='upitem'>
+      <img src='${esc(p.url)}' alt='' loading='lazy'>
+      <button class='updel' onclick="upDelete('${esc(p.name)}')"
+        aria-label='Delete photo'>&times;</button>
+    </div>`).join('');
+}
+async function upUpload(e){
+  e.preventDefault();
+  const m=document.getElementById('uploads-msg');
+  m.className='msg';m.textContent='Uploading…';
+  const r=await api('POST','/api/uploads',new FormData(e.target),true);
+  if(r.ok){
+    m.className='msg ok';
+    m.textContent=`Uploaded ${r.count} photo${r.count==1?'':'s'}.`;
+    e.target.reset();renderUploads();
+  }else{
+    m.className='msg err';
+    m.textContent='Upload failed: '+(r.error||'unknown error');
+  }
+  return false;
+}
+async function upDelete(name){
+  if(!confirm('Delete this photo?'))return;
+  const r=await api('DELETE','/api/uploads/'+encodeURIComponent(name));
+  const m=document.getElementById('uploads-msg');
+  if(r.ok){m.className='msg ok';m.textContent='Deleted.';renderUploads();}
+  else{m.className='msg err';m.textContent='Delete failed.';}
 }
 /* ---------- sources ---------- */
 async function renderSources(a){
