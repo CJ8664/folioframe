@@ -324,7 +324,12 @@ class PickFlow:
                     # explicitly a non-image (e.g. video/*).
                     if mt and not mt.startswith("image/"):
                         continue  # photo frame: images only
-                    data = self.client.download(item["baseUrl"])
+                    base_url = item.get("baseUrl")
+                    if not base_url:
+                        # Item not ready or API changed; skip gracefully
+                        # instead of crashing with KeyError.
+                        continue
+                    data = self.client.download(base_url)
                     ext = ".jpg" if "jpeg" in mt else ".png"
                     name = item["id"] + ext
                     if self.blob_store is not None:
