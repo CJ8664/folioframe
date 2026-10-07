@@ -338,6 +338,7 @@ class PickFlow:
                     # Capture metadata for display rendering (date, filename,
                     # dimensions). Stored as JSON sidecar alongside the image.
                     mf_meta = mf.get("mediaFileMetadata") or {}
+                    photo_meta = mf_meta.get("photoMetadata") or {}
                     metadata = {
                         "id": item["id"],
                         "createTime": item.get("createTime"),
@@ -345,6 +346,16 @@ class PickFlow:
                         "mimeType": mt or "image/jpeg",
                         "width": mf_meta.get("width"),
                         "height": mf_meta.get("height"),
+                        "cameraMake": mf_meta.get("cameraMake"),
+                        "cameraModel": mf_meta.get("cameraModel"),
+                        "focalLength": photo_meta.get("focalLength"),
+                        "aperture": photo_meta.get("apertureFNumber"),
+                        "iso": photo_meta.get("isoEquivalent"),
+                        "exposureTime": photo_meta.get("exposureTime"),
+                        # Note: location/GPS is NOT available via Picker API.
+                        # Google strips location metadata from downloads
+                        # for privacy. Album info is also not available
+                        # (picker selects individual items, not albums).
                         "source": "google_photos",
                         "downloadedAt": time.strftime(
                             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
