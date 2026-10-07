@@ -1399,11 +1399,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+def _static_ver(name):
+    """Content-hash version for cache-busting static URLs."""
+    try:
+        with open(os.path.join(STATIC_DIR, name), "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()[:8]
+    except OSError:
+        return "0"
+
 # ---------------------------------------------------------------------------
 # Frosted-glass design system (iOS HIG + Umbrel 2.0 inspired).
 # Dark-first; light mode via prefers-color-scheme. Mobile-first layout.
 # ---------------------------------------------------------------------------
-THEME_CSS = "<link rel='stylesheet' href='/static/folioframe.css'>"
+THEME_CSS = ("<link rel='stylesheet' href='/static/folioframe.css?v=" +
+             _static_ver("folioframe.css") + "'>")
 
 PWA_HEAD = """
 <meta charset='utf-8'>
@@ -1711,7 +1720,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <p class='editor-status' id='editorStatus' role='status'></p>
   </section>
 </div>
-<script src='/static/photos.js'></script>
+<script src='/static/photos.js?v=""" + _static_ver("photos.js") + """'></script>
 """ + SW_REGISTER + """</body></html>"""
 
 
