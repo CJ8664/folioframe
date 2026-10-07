@@ -970,8 +970,8 @@ class TestPhotoPicker(unittest.TestCase):
         self.assertEqual(status, 200)
         j = json.loads(data)
         self.assertTrue(j["ok"])
-        self.assertIn(pid, [p["id"] for p in j["photos"]])
-        self.assertIn(spaced, [p["id"] for p in j["photos"]])
+        self.assertIn(f"gphotos:{pid}", [p["id"] for p in j["photos"]])
+        self.assertIn(f"gphotos:{spaced}", [p["id"] for p in j["photos"]])
         status, hdrs, data = self.req(
             "GET", "/api/photos/" + pid + "/thumb", headers=h)
         self.assertEqual(status, 200)

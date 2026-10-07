@@ -326,6 +326,53 @@ class Server:
                 or self.cfg.get("source", "picsum"))
         return name if name in SOURCES else "picsum"
 
+    def _all_user_photos(self, sub):
+        """Aggregate photos from google_photos and uploads sources.
+        
+        Returns list of (namespaced_id, display_name, source_name) tuples.
+        Namespaced IDs are like 'gphotos:ABC123.jpg' or 'uploads:xyz.jpg'.
+        """
+        photos = []
+        # Google Photos
+        try:
+            gp_source = self._user_source(sub, "google_photos")
+            for pid in gp_source._ids():
+                photos.append((f"gphotos:{pid}", pid, "google_photos"))
+        except Exception:
+            pass
+        # Uploads
+        try:
+            up_source = self._user_source(sub, "uploads")
+            for pid in up_source._ids():
+                photos.append((f"uploads:{pid}", pid, "uploads"))
+        except Exception:
+            pass
+        return photos
+
+    def _resolve_namespaced_id(self, sub, namespaced_id):
+        """Parse 'gphotos:ABC.jpg' -> (source_obj, real_id, source_name).
+        
+        Falls back to active source for un-namespaced IDs (backward compat).
+        Returns (None, None, None) if not found.
+        """
+        if ":" in namespaced_id:
+            prefix, real_id = namespaced_id.split(":", 1)
+            if prefix == "gphotos":
+                src = self._user_source(sub, "google_photos")
+                if real_id in src._ids():
+                    return src, real_id, "google_photos"
+            elif prefix == "uploads":
+                src = self._user_source(sub, "uploads")
+                if real_id in src._ids():
+                    return src, real_id, "uploads"
+            return None, None, None
+        else:
+            # Backward compat: un-namespaced ID uses active source
+            src = self.photos_for(sub).source
+            if namespaced_id in src._ids():
+                return src, namespaced_id, self._user_source_name(sub)
+            return None, None, None
+
     def _user_source(self, sub, name):
         if name == "google_photos":
             return self.photos_for(sub).source
@@ -708,18 +755,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rest = p[len(prefix):]
         raw_id = rest.split("/")[0]
         item_id = urllib.parse.unquote(raw_id)
-        try:
-            ids = set(APP.photos_for(sub).source._ids())
-        except Exception:
-            return None, None
-        if not item_id or item_id not in ids:
+        # Handle namespaced IDs (gphotos:xxx, uploads:xxx)
+        src, real_id, _ = APP._resolve_namespaced_id(sub, item_id)
+        if src is None:
             return None, None
         return item_id, rest[len(raw_id):]
 
     def _photo_bytes(self, sub, item_id, thumb=False):
         """Load a cached photo; thumbnail or full-size JPEG bytes."""
-        src = APP.photos_for(sub).source
-        img = src.load(item_id)
+        src, real_id, _ = APP._resolve_namespaced_id(sub, item_id)
+        if src is None:
+            raise FileNotFoundError(item_id)
+        img = src.load(real_id)
         if thumb:
             img.thumbnail((360, 480), Image.LANCZOS)
             q = 82
@@ -938,11 +985,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             _, _, sub = got
             try:
-                ids = APP.photos_for(sub).source._ids()
+                photos = APP._all_user_photos(sub)
             except Exception:
-                ids = []
+                photos = []
             self._json(200, {"ok": True,
-                             "photos": [{"id": i, "name": i} for i in ids]})
+                             "photos": [{"id": nid, "name": name,
+                                         "source": src}
+                                        for nid, name, src in photos]})
             return
 
         if p.startswith("/api/photos/"):
@@ -961,7 +1010,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                            {"Cache-Control": "private, max-age=3600"})
                 return
             if item_id and rest == "/meta":
-                meta = APP.photos_for(sub).source.get_metadata(item_id)
+                src, real_id, _ = APP._resolve_namespaced_id(sub, item_id)
+                meta = src.get_metadata(real_id) if src else None
                 if meta is None:
                     self._json(404, {"ok": False, "error": "not found"})
                 else:
@@ -1401,7 +1451,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             buf = BytesIO()
             img.save(buf, "JPEG", quality=92)
             try:
-                APP.photos_for(sub).source.save(item_id, buf.getvalue())
+                src, real_id, _ = APP._resolve_namespaced_id(sub, item_id)
+                if src is None:
+                    raise FileNotFoundError(item_id)
+                src.save(real_id, buf.getvalue())
             except Exception:
                 self._json(500, {"ok": False, "error": "save failed"})
                 return
