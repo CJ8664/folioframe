@@ -28,7 +28,7 @@ class FolderSource(Source):
         return pick_unseen(self._ids(), history, self.rng)
 
     def load(self, item_id):
-        with open(os.path.join(self.dir, item_id), "rb") as f:
+        with open(self._validated_path(item_id), "rb") as f:
             img = Image.open(f)
             img.load()
         return img.convert("RGB")
@@ -40,20 +40,23 @@ class FolderSource(Source):
 
     def save(self, item_id, data):
         """Replace a photo's bytes (e.g. after user edit)."""
-        # Validate item_id to prevent path traversal
+        path = self._validated_path(item_id)
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def _validated_path(self, item_id):
+        """Resolve item_id to a path within self.dir, or raise ValueError."""
         if not item_id or "/" in item_id or "\\" in item_id or item_id.startswith("."):
             raise ValueError("invalid item_id")
         path = os.path.join(self.dir, item_id)
-        # Ensure the path is within self.dir
         if not os.path.abspath(path).startswith(os.path.abspath(self.dir)):
             raise ValueError("invalid item_id")
-        with open(path, "wb") as f:
-            f.write(data)
+        return path
 
     def get_metadata(self, item_id):
         """Return basic file metadata, or None if not found."""
         try:
-            path = os.path.join(self.dir, item_id)
+            path = self._validated_path(item_id)
             if not os.path.exists(path):
                 return None
             st = os.stat(path)
