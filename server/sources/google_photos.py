@@ -258,6 +258,8 @@ class PickFlow:
         while True:
             s = self.client.get_session(session_id)
             if s.get("mediaItemsSet"):
+                print(f"PickFlow: session {session_id} mediaItemsSet=true",
+                      flush=True)
                 break
             pc = s.get("pollingConfig", {})
             interval = _parse_duration(pc.get("pollInterval", "2s")) or 2.0
@@ -273,6 +275,9 @@ class PickFlow:
         resp = None
         for attempt in range(12):
             resp = self.client.list_media_items(session_id, None)
+            n_items = len(resp.get("mediaItems", []))
+            print(f"PickFlow: list attempt {attempt+1}: {n_items} items",
+                  flush=True)
             if resp.get("mediaItems"):
                 break
             sleep(min(2.0 * (attempt + 1), 10.0))
