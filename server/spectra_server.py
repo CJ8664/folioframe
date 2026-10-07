@@ -1393,9 +1393,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             buf = BytesIO()
             img.save(buf, "JPEG", quality=92)
+            data = buf.getvalue()
+            print(f"EDIT DEBUG: item_id={item_id}, data_len={len(data)}, "
+                  f"sub={sub}", flush=True)
             try:
-                APP.photos_for(sub).source.save(item_id, buf.getvalue())
-            except Exception:
+                src = APP.photos_for(sub).source
+                print(f"EDIT DEBUG: blob_store={src.blob_store is not None}, "
+                      f"prefix={src.blob_prefix}", flush=True)
+                src.save(item_id, data)
+                # Verify it saved
+                verify = src.blob_store.get(src.blob_prefix + item_id)
+                print(f"EDIT DEBUG: verify_len={len(verify) if verify else 0}",
+                      flush=True)
+            except Exception as e:
+                print(f"EDIT DEBUG: save failed: {e}", flush=True)
                 self._json(500, {"ok": False, "error": "save failed"})
                 return
             self._json(200, {"ok": True})
