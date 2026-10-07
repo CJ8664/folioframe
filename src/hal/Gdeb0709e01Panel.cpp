@@ -85,28 +85,27 @@ bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
 bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
                                   int numLines) {
   Serial.println("drawStatus: fillScreen");
-  // Warm Clay light theme: warm white background, charcoal text.
-  // Panel is 1200x1600 portrait. Font 4 is used throughout (fonts 6/8 have
-  // rendering issues on this driver).
-  epaper.fillScreen(TFT_WHITE);
+  // SenseCraft-style: dark teal/green background with large white centered text
+  // Panel is 1200x1600 portrait
+  epaper.fillScreen(TFT_GREEN);
   Serial.println("drawStatus: drawString");
 
-  // Title: centered, charcoal
-  epaper.setTextColor(TFT_BLACK);
+  // Title: very large, centered (font 8 is the largest built-in)
+  epaper.setTextColor(TFT_WHITE);
   epaper.setTextDatum(MC_DATUM);  // Middle-Center datum for easy centering
 
   int y = 300;
-  epaper.drawString(title, 600, y, 4);
-  y += 100;
+  epaper.drawString(title, 600, y, 8);
+  y += 160;
 
-  // Subtitle lines: centered
+  // Subtitle lines: large, centered (font 6)
   for (int i = 0; i < numLines; i++) {
     if (lines[i][0] == '\0') {
-      y += 40;  // Extra spacing for blank lines
+      y += 60;  // Extra spacing for blank lines
       continue;
     }
-    epaper.drawString(lines[i], 600, y, 4);
-    y += 70;
+    epaper.drawString(lines[i], 600, y, 6);
+    y += 100;
   }
 
   epaper.setTextDatum(TL_DATUM);  // Reset to top-left
@@ -149,7 +148,7 @@ void Gdeb0709e01Panel::drawQRCode(const char* text, int x, int y, int size) {
 void Gdeb0709e01Panel::drawHelpQR() {
   // Small help QR in the bottom-right corner of every non-photo status
   // screen. Drawn into the same framebuffer before the single refresh.
-  static const char* kHelpUrl = "https://github.com/CJ8664/folioframe";
+  static const char* kHelpUrl = "https://github.com/CJ8664/spectra-frame";
   // Version-6 QR = 41 modules; drawQRCode() scales to fit the target size.
   const int kTarget = 200;
   const int kModules = 41;
@@ -159,26 +158,27 @@ void Gdeb0709e01Panel::drawHelpQR() {
   const int y = 1600 - kSize - kMargin;
   drawQRCode(kHelpUrl, x, y, kTarget);
   epaper.setTextDatum(MC_DATUM);
-  epaper.setTextColor(TFT_BLACK);
+  epaper.setTextColor(TFT_WHITE);
   epaper.drawString("Scan for help", x + kSize / 2, y - 36, 2);
   epaper.setTextDatum(TL_DATUM);
 }
 
 bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
                                    const char* url) {
-  // Warm Clay light theme: warm white background, charcoal text.
+  // SenseCraft-style setup screen: dark green background, large white text,
   // QR code for the portal URL. Panel is 1200x1600 portrait.
-  // Font 4 is used throughout (fonts 6/8 have rendering issues on this driver).
   Serial.println("drawSetupQR: fillScreen");
-  epaper.fillScreen(TFT_WHITE);
+  epaper.fillScreen(TFT_GREEN);
 
-  epaper.setTextColor(TFT_BLACK);
+  epaper.setTextColor(TFT_WHITE);
   epaper.setTextDatum(MC_DATUM);
 
-  // Title
+  // Title - split into two lines to fit width
   int y = 180;
-  epaper.drawString("FolioFrame Setup", 600, y, 4);
-  y += 100;
+  epaper.drawString("FolioFrame", 600, y, 8);
+  y += 140;
+  epaper.drawString("Setup", 600, y, 8);
+  y += 160;
 
   // Two QR codes side by side: the setup portal URL and the GitHub
   // help page (matches the reviewed mockups).
@@ -188,20 +188,20 @@ bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
   const int kLeftX = 600 - kQrActual - kQrGap / 2;
   const int kRightX = 600 + kQrGap / 2;
   drawQRCode(url, kLeftX, y, kQrTarget);
-  drawQRCode("https://github.com/CJ8664/folioframe", kRightX, y, kQrTarget);
+  drawQRCode("https://github.com/CJ8664/spectra-frame", kRightX, y, kQrTarget);
   y += kQrActual + 40;
   epaper.drawString("Setup page", kLeftX + kQrActual / 2, y, 4);
   epaper.drawString("Help & docs", kRightX + kQrActual / 2, y, 4);
   y += 100;
 
-  // Instructions
-  epaper.drawString("1. Join Wi-Fi network:", 600, y, 4);
-  y += 70;
+  // Instructions - use smaller font for AP name to fit
+  epaper.drawString("1. Join Wi-Fi network:", 600, y, 6);
+  y += 90;
   epaper.drawString(apName, 600, y, 4);
-  y += 70;
-  epaper.drawString("2. Scan the setup QR", 600, y, 4);
-  y += 70;
-  epaper.drawString("3. Enter Wi-Fi details", 600, y, 4);
+  y += 100;
+  epaper.drawString("2. Scan the setup QR", 600, y, 6);
+  y += 90;
+  epaper.drawString("3. Enter Wi-Fi details", 600, y, 6);
 
   epaper.setTextDatum(TL_DATUM);
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
