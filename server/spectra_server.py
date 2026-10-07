@@ -1155,22 +1155,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         p = urllib.parse.urlparse(self.path).path
 
         if p == "/api/auth/token":
-            # GIS redirect mode (mobile) POSTs form-encoded with 'credential';
-            # popup mode POSTs JSON with 'id_token'.
-            ctype = self.headers.get("Content-Type", "")
-            if "application/x-www-form-urlencoded" in ctype:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                body = self.rfile.read(length).decode() if length else ""
-                params = urllib.parse.parse_qs(body)
-                id_token = (params.get("credential") or [""])[0]
-                is_redirect = True
-            else:
-                data = self._read_json()
-                if data is None:
-                    self._json(400, {"ok": False, "error": "bad json"})
-                    return
-                id_token = data.get("id_token", "")
-                is_redirect = False
+            data = self._read_json()
+            if data is None:
+                self._json(400, {"ok": False, "error": "bad json"})
+                return
+            id_token = data.get("id_token", "")
             # The Google ID token is verified against the service's own
             # OAuth client (admin-configured). No rate limit here: Google
             # ID tokens can't be brute-forced -- forging one requires
@@ -1180,24 +1169,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 sub, email, name = APP.auth.verify_id_token(id_token)
             except AuthError as e:
-                if is_redirect:
-                    self._send(302, "text/plain", b"sign-in failed",
-                               {"Location": "/?err=auth"})
-                else:
-                    self._json(401, {"ok": False, "error": str(e)})
+                self._json(401, {"ok": False, "error": str(e)})
                 return
             user = APP.store.get("users", sub) or {}
             user.update({"email": email, "name": name,
                          "last_login": int(time.time())})
             APP.store.put("users", sub, user)
             session_id, csrf = APP.auth.create_session(sub)
-            if is_redirect:
-                self._send(302, "text/plain", b"ok",
-                           dict({"Location": "/"},
-                                **self._set_session_cookie(session_id)))
-            else:
-                self._json(200, {"ok": True, "email": email, "csrf": csrf},
-                           self._set_session_cookie(session_id))
+            self._json(200, {"ok": True, "email": email, "csrf": csrf},
+                       self._set_session_cookie(session_id))
             return
 
         if p == "/api/auth/logout":
@@ -1740,10 +1720,7 @@ function initGis(cid){
   if(location.protocol!=='https:'&&location.hostname!=='localhost'
      &&location.hostname!=='127.0.0.1')
     document.getElementById('https-note').style.display='inline';
-  var isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  google.accounts.id.initialize({client_id:cid,callback:onGoogle,
-    ux_mode:isMobile?'redirect':'popup',
-    login_uri:location.origin+'/api/auth/token'});
+  google.accounts.id.initialize({client_id:cid,callback:onGoogle});
   google.accounts.id.renderButton(document.getElementById('gbtn'),
     {type:'standard',theme:'filled_black',size:'large',width:280});
 }
