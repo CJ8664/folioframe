@@ -1411,8 +1411,8 @@ def _static_ver(name):
 # Frosted-glass design system (iOS HIG + Umbrel 2.0 inspired).
 # Dark-first; light mode via prefers-color-scheme. Mobile-first layout.
 # ---------------------------------------------------------------------------
-THEME_CSS = ("<link rel='stylesheet' href='/static/vendor/farvist.min.css?v=" +
-             _static_ver("vendor/farvist.min.css") + "'>" +
+THEME_CSS = ("<link rel='stylesheet' href='/static/farvist.min.css?v=" +
+             _static_ver("farvist.min.css") + "'>" +
              "<link rel='stylesheet' href='/static/farvist-warm-clay.css?v=" +
              _static_ver("farvist-warm-clay.css") + "'>" +
              "<link rel='stylesheet' href='/static/folioframe.css?v=" +
