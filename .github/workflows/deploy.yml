@@ -74,20 +74,20 @@ jobs:
           PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
           PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
         run: |
-          # Portainer CE stack update needs the full stack definition.
-          # Fetch current stack, then PUT it back with pullImage=true.
-          STACK_JSON=$(curl -fsS \
-            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID" \
-            -H "X-API-Key: $PORTAINER_API_KEY")
-          STACK_FILE=$(echo "$STACK_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['StackFileContent'])")
-          # Escape for JSON
-          STACK_FILE_ESCAPED=$(echo "$STACK_FILE" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")
-          curl -fsS -X PUT \
-            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID" \
+          # Git-managed stack: use the git redeploy endpoint (pulls compose
+          # from the repo, then pullImage pulls the fresh Docker Hub image).
+          # Capture HTTP status so failures show Portainer's actual message.
+          HTTP_STATUS=$(curl -s -o /tmp/portainer-redeploy.json -w "%{http_code}" -X PUT \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID" \
             -H "X-API-Key: $PORTAINER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"stackFileContent\": $STACK_FILE_ESCAPED, \"pullImage\": true, \"prune\": false}" \
-            && echo "Portainer redeploy triggered"
+            -d '{"pullImage": true, "repositoryReferenceName": "refs/heads/main"}')
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Portainer redeploy failed (HTTP $HTTP_STATUS)"
+            cat /tmp/portainer-redeploy.json
+            exit 1
+          fi
+          echo "Portainer redeploy triggered"
 
       - name: Wait for health
         run: |
