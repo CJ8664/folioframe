@@ -14,8 +14,7 @@ on:
       - 'Dockerfile'
       - 'docker-compose.yml'
       - '.github/workflows/deploy.yml'
-    paths-ignore:
-      - 'server/firmware/**'
+      - '!server/firmware/**'
   workflow_dispatch:
 
 concurrency:
