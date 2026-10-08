@@ -1,0 +1,80 @@
+name: Firmware
+
+# Builds ESP32-S3 firmware and publishes to GitHub Releases on merge to main.
+# Triggered only by firmware source changes — server-only changes skip this.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'platformio.ini'
+      - 'lib/**'
+      - 'tools/package_firmware.sh'
+      - '.github/workflows/firmware.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: firmware-main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create releases
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+            ~/.platformio/packages
+          key: ${{ runner.os }}-pio-6.2.0-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-6.2.0-
+
+      - name: Install PlatformIO
+        run: pip install "platformio==6.2.0"
+
+      - name: Build firmware
+        run: pio run -e ee02
+
+      - name: Package firmware
+        run: tools/package_firmware.sh ee02
+
+      - name: Read version
+        id: version
+        run: |
+          FW_VERSION=$(cat server/firmware/VERSION | tr -d '[:space:]')
+          FW_BUILD=$(cat server/firmware/BUILD | tr -d '[:space:]')
+          echo "version=$FW_VERSION" >> $GITHUB_OUTPUT
+          echo "build=$FW_BUILD" >> $GITHUB_OUTPUT
+          echo "tag=folioframe-v$FW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: FolioFrame Firmware ${{ steps.version.outputs.version }} (build ${{ steps.version.outputs.build }})
+          body: |
+            Firmware ${{ steps.version.outputs.version }} — build ${{ steps.version.outputs.build }}.
+            Commit: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          files: |
+            server/firmware/firmware.bin
+            server/firmware/firmware-${{ steps.version.outputs.version }}.bin
+            server/firmware/VERSION
+            server/firmware/BUILD
+          fail_on_unmatched_files: true

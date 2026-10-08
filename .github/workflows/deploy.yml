@@ -1,0 +1,100 @@
+name: Deploy
+
+# Builds the server Docker image and deploys to production on merge to main.
+# Triggered only by server/container changes — firmware-only changes skip this.
+# Firmware is delivered via GitHub Releases + the server's runtime refresh,
+# not baked into the image.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**/*.py'
+      - 'server/static/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy.yml'
+    paths-ignore:
+      - 'server/firmware/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Portainer redeploy
+        env:
+          PORTAINER_URL: ${{ vars.PORTAINER_URL }}
+          PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+          PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
+          PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
+        run: |
+          # Update the stack to pull the new image (pullImage=true).
+          # Adjust the endpoint path to match the Portainer version in use.
+          curl -fsS -X PUT \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID" \
+            -H "X-API-Key: $PORTAINER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"pullImage": true}' \
+            && echo "Portainer redeploy triggered"
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS https://frame.chiragjain.info/api/config >/dev/null 2>&1; then
+              echo "Server healthy"
+              exit 0
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 10
+          done
+          echo "Server did not become healthy in time" >&2
+          exit 1

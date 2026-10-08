@@ -304,6 +304,84 @@ class Server:
             return name
         return None
 
+    def refresh_firmware_from_releases(self):
+        """Pull latest firmware from GitHub Releases.
+
+        Checks for releases tagged folioframe-vX.Y.Z, downloads any newer
+        firmware binaries into FW_DIR (keeping old versions). Returns a
+        dict with the outcome: {updated: bool, version: str, message: str}.
+        Public repo, no auth needed (60 req/hr unauthenticated is plenty
+        for manual refresh + startup check).
+        """
+        import json
+        import re
+        import urllib.request
+
+        result = {"updated": False, "version": self.fw_version(),
+                  "message": "already up to date"}
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/CJ8664/folioframe/releases",
+                headers={"User-Agent": "FolioFrame-server",
+                         "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                releases = json.load(resp)
+        except Exception as e:
+            result["message"] = f"GitHub API error: {e}"
+            return result
+
+        # Find latest folioframe-vX.Y.Z release
+        best = None
+        best_ver = None
+        for r in releases:
+            tag = r.get("tag_name", "")
+            m = re.fullmatch(r"folioframe-v(\d+\.\d+\.\d+)", tag)
+            if not m or r.get("draft"):
+                continue
+            ver = m.group(1)
+            key = tuple(int(x) for x in ver.split("."))
+            if best_ver is None or key > best_ver:
+                best_ver = key
+                best = r
+        if not best:
+            result["message"] = "no firmware releases found"
+            return result
+
+        latest_ver = ".".join(str(x) for x in best_ver)
+        local_ver = self.fw_version()
+        try:
+            local_key = tuple(int(x) for x in local_ver.split("."))
+        except (ValueError, AttributeError):
+            local_key = (0, 0, 0)
+        if best_ver <= local_key:
+            result["message"] = f"already up to date ({local_ver})"
+            return result
+
+        # Download release assets into FW_DIR
+        assets = {a["name"]: a["browser_download_url"]
+                  for a in best.get("assets", [])}
+        downloaded = []
+        for name in ("firmware.bin", f"firmware-{latest_ver}.bin",
+                     "VERSION", "BUILD"):
+            url = assets.get(name)
+            if not url:
+                continue
+            try:
+                dest = os.path.join(FW_DIR, name)
+                tmp = dest + ".tmp"
+                urllib.request.urlretrieve(url, tmp)
+                os.replace(tmp, dest)
+                downloaded.append(name)
+            except Exception as e:
+                result["message"] = f"download failed for {name}: {e}"
+                return result
+        # Clear cached md5 so the new binary is re-hashed
+        self._fw_md5_cache = None
+        result.update(updated=True, version=latest_ver,
+                      message=f"updated to {latest_ver} ({', '.join(downloaded)})")
+        logger.info(f"firmware refresh: {result['message']}")
+        return result
+
     def uploads_dir(self, sub):
         """Per-user uploads directory (created on demand)."""
         d = os.path.join(self.data_dir, "users", sub, "uploads")
@@ -918,6 +996,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # secret is never exposed here.
             self._json(200, {"firebase": APP.firebase_cfg.get("web", {}),
                              "google_client_id": APP.auth.client_id})
+            return
+
+        if p == "/api/firmware/refresh" and self.command == "POST":
+            # Public: pull latest firmware from GitHub Releases into the
+            # firmware volume. Anyone can trigger it; it only downloads
+            # from our own public repo.
+            result = APP.refresh_firmware_from_releases()
+            self._json(200, result)
             return
 
         if p == "/login":
@@ -2009,6 +2095,8 @@ def _flash_page(available, version, versions):
         {picker}
         <button class='btn btn-primary' id='flash-go'>Connect &amp; flash</button>
         <button class='btn btn-ghost' id='serial-go' style='margin-top:8px'>View serial logs</button>
+        <button class='btn btn-ghost' id='fw-refresh-go' style='margin-top:8px'>Check for firmware updates</button>
+        <p class='fine' id='fw-refresh-status'></p>
         <p class='fine'>Your browser will ask which serial port to use —
         pick the one for the frame. The flash runs in the console
         on the right. "View serial logs" opens a live serial monitor
@@ -2460,6 +2548,18 @@ def main():
                 logger.error(f"tick error: {e}")
 
     threading.Thread(target=ticker, daemon=True).start()
+
+    # Check GitHub Releases for newer firmware on startup (background,
+    # non-blocking). Keeps /flash current without a redeploy.
+    def firmware_startup_check():
+        try:
+            result = APP.refresh_firmware_from_releases()
+            logger.info(f"startup firmware check: {result['message']}")
+        except Exception as e:
+            logger.error(f"startup firmware check failed: {e}")
+
+    threading.Thread(target=firmware_startup_check, daemon=True).start()
+
     # Cloud Run injects $PORT; local runs use config.json.
     port = int(os.environ.get("PORT", APP.cfg.get("port", 8765)))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
