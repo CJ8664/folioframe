@@ -53,7 +53,16 @@ bool Gdeb0709e01Panel::begin() {
   Serial.printf("panel pre-begin, BUSY=%d\n", digitalRead(4));
   epaper.begin();
   // Old library begin() is void; check BUSY to see if panel is alive.
-  Serial.printf("panel begin ok, BUSY=%d\n", digitalRead(4));
+  // After init the panel should be idle (BUSY low). If BUSY is stuck high,
+  // the panel isn't responding (disconnected FPC?) — report failure so
+  // main.cpp can show the error screen instead of failing silently.
+  delay(100);
+  int busy = digitalRead(4);
+  Serial.printf("panel begin ok, BUSY=%d\n", busy);
+  if (busy) {
+    Serial.println("panel begin FAILED: BUSY stuck high");
+    return false;
+  }
   return true;
 }
 
@@ -181,7 +190,10 @@ bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
 void Gdeb0709e01Panel::drawQRCode(const char* text, int x, int y, int size) {
   QRCode qrcode;
   uint8_t qrcodeData[qrcode_getBufferSize(6)];
-  qrcode_initText(&qrcode, qrcodeData, 6, 0, text);
+  // qrcode_initText returns 0 if the text exceeds version-6 capacity.
+  // Without this check, qrcode.size stays 0 and `size / qrcode.size`
+  // is a division by zero -> CPU exception -> reboot.
+  if (!qrcode_initText(&qrcode, qrcodeData, 6, 0, text)) return;
 
   int scale = size / qrcode.size;
   if (scale < 1) scale = 1;
@@ -198,24 +210,6 @@ void Gdeb0709e01Panel::drawQRCode(const char* text, int x, int y, int size) {
       }
     }
   }
-}
-
-void Gdeb0709e01Panel::drawHelpQR() {
-  // Small help QR in the bottom-right corner of every non-photo status
-  // screen. Drawn into the same framebuffer before the single refresh.
-  static const char* kHelpUrl = "https://github.com/CJ8664/folioframe";
-  // Version-6 QR = 41 modules; drawQRCode() scales to fit the target size.
-  const int kTarget = 200;
-  const int kModules = 41;
-  const int kSize = kModules * (kTarget / kModules);  // 164 px
-  const int kMargin = 48;
-  const int x = 1200 - kSize - kMargin;
-  const int y = 1600 - kSize - kMargin;
-  drawQRCode(kHelpUrl, x, y, kTarget);
-  epaper.setTextDatum(MC_DATUM);
-  epaper.setTextColor(TFT_BLACK);
-  epaper.drawString("Scan for help", x + kSize / 2, y - 36, 2);
-  epaper.setTextDatum(TL_DATUM);
 }
 
 bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,

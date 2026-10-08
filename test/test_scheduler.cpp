@@ -56,4 +56,15 @@ TEST(sched_tz_offset_applies) {
   EXPECT_TRUE(p.skippedForQuiet);
 }
 
+TEST(sched_unsynced_clock_skips_quiet) {
+  // NTP failed: time() returns garbage (uptime). The quiet-window
+  // extension must be skipped, or the frame could oversleep by hours.
+  // Use a time that WOULD trigger quiet extension if the clock were trusted.
+  SleepPlan p =
+      computeSleep(utc(2026, 10, 2, 19, 30), 3600, 1320, 420, 120,
+                   60, 7 * 24 * 3600, false /* clockOk */);
+  EXPECT_FALSE(p.skippedForQuiet);
+  EXPECT_EQ(p.sleepSeconds, 3600u);
+}
+
 int main() { return runAllTests(); }

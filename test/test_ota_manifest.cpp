@@ -47,4 +47,13 @@ TEST(md5_validation) {
   EXPECT_FALSE(validMd5(""));
 }
 
+TEST(build_overflow_rejected) {
+  // >10-digit build would wrap UINT32_MAX silently without the guard.
+  OtaManifest m;
+  EXPECT_FALSE(parseOtaManifest("version=0.0.13\nbuild=99999999999\n", m));
+  // Exactly UINT32_MAX is fine.
+  EXPECT_TRUE(parseOtaManifest("version=0.0.13\nbuild=4294967295\n", m));
+  EXPECT_EQ(m.build, 4294967295u);
+}
+
 int main() { return runAllTests(); }

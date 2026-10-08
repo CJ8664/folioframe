@@ -29,15 +29,19 @@ class LocalBlobStore(BlobStore):
     def _path(self, key):
         # keep keys inside the root even if a caller passes something odd
         safe = os.path.normpath(key).lstrip(os.sep)
-        if safe.startswith(".."):
+        if safe.startswith("..") or safe in (".", ""):
             raise ValueError("bad blob key")
         return os.path.join(self.root, safe)
 
     def put(self, key, data, content_type="application/octet-stream"):
         p = self._path(key)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "wb") as f:
+        # Atomic write: crash mid-write leaves the old file intact,
+        # never a truncated/corrupt blob.
+        tmp = p + ".tmp"
+        with open(tmp, "wb") as f:
             f.write(data)
+        os.replace(tmp, p)
 
     def get(self, key):
         p = self._path(key)

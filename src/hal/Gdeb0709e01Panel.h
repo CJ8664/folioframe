@@ -19,7 +19,6 @@ class Gdeb0709e01Panel : public Panel {
                   bool setupHeader = true) override;
   bool drawSetupQR(const char* title, const char* apName, const char* url) override;
   bool drawPairing(const char* claimCode, const char* where) override;
-  void drawHelpQR() override;
   void sleep() override;
 
  private:

@@ -203,18 +203,31 @@ def _is_transient_network_error(e):
 
 
 def _http_with_retry(http_fn, max_attempts=4):
-    """Wrap an _http-style fn with retry for transient network errors."""
+    """Wrap an _http-style fn with retry for transient failures.
+
+    Retries on network errors AND on HTTP 429/5xx statuses (returned as
+    (status, body) tuples by _http rather than raised). Uses exponential
+    backoff.
+    """
     def wrapper(method, url, headers=None, data=None):
         last = None
         for attempt in range(max_attempts):
             try:
-                return http_fn(method, url, headers=headers, data=data)
+                status, body = http_fn(method, url, headers=headers, data=data)
             except Exception as e:
                 last = e
                 if not _is_transient_network_error(e):
                     raise
-                if attempt < max_attempts - 1:
-                    time.sleep(min(2.0 * (attempt + 1), 8.0))
+                # Transient network error: fall through to backoff below.
+            else:
+                # HTTP-level transient: 429 rate-limit or 5xx server error.
+                if status == 429 or 500 <= status < 600:
+                    last = RuntimeError(f"transient HTTP {status}")
+                    # Fall through to backoff below.
+                else:
+                    return status, body
+            if attempt < max_attempts - 1:
+                time.sleep(min(2.0 * (attempt + 1), 8.0))
         raise last
     return wrapper
 
@@ -288,6 +301,10 @@ class PickFlow:
         self.max_items = max_items
         self.blob_store = blob_store
         self.blob_prefix = blob_prefix
+        # Count of items that failed to download in the last run().
+        # run() still returns the success count for backward compatibility.
+        self.failed = 0
+        self._last_error = None
         if blob_store is None:
             os.makedirs(cache_dir, exist_ok=True)
 
@@ -347,7 +364,14 @@ class PickFlow:
                 base_url = mf.get("baseUrl")
                 if not base_url:
                     continue
-                data = self.client.download(base_url)
+                try:
+                    data = self.client.download(base_url)
+                except Exception as e:
+                    # One bad photo must not fail the whole import.
+                    # Successfully downloaded photos remain usable.
+                    self.failed += 1
+                    self._last_error = e
+                    continue
                 ext = ".jpg" if "jpeg" in mt else ".png"
                 name = item["id"] + ext
                 # Capture metadata for display rendering (date, filename,
@@ -389,6 +413,10 @@ class PickFlow:
             page_token = resp.get("nextPageToken")
             if not page_token:
                 break
+        # Total failure (nothing imported): raise so the caller can retry
+        # with the session intact. Partial failure returns the success count.
+        if count == 0 and self.failed > 0 and self._last_error is not None:
+            raise self._last_error
         if cleanup_session:
             try:
                 self.client.delete_session(session_id)

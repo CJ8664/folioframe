@@ -47,11 +47,16 @@ class Portal {
   bool dirty_ = false;
   WiFiManagerParameter serverParam_;  // server URL field on the Wi-Fi portal
   bool serverParamAdded_ = false;
+  // Per-boot CSRF token for /save and /unpair POSTs. Generated in run()
+  // from esp_random(); an attacker on the LAN can't guess it.
+  String csrfToken_;
 
   String settingsPage();
   void handleSave();
   void handleUnpair();
   void handleDebug();
+  // True if the request carries the valid CSRF token.
+  bool checkCsrf();
   // Persist the server URL typed into the Wi-Fi captive portal (if any).
   void saveServerUrlFromPortal();
   static int parseTimeToMin(const String& hhmm);

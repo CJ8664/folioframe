@@ -36,7 +36,10 @@ bool parseOtaManifest(const std::string& text, OtaManifest& out) {
         uint32_t b = 0;
         for (char c : val) {
           if (c < '0' || c > '9') return false;
-          b = b * 10 + (uint32_t)(c - '0');
+          uint32_t d = (uint32_t)(c - '0');
+          // Overflow guard: a >10-digit build would wrap silently.
+          if (b > (UINT32_MAX - d) / 10) return false;
+          b = b * 10 + d;
         }
         if (b == 0) return false;  // build 0 disables updates
         m.build = b;

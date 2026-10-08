@@ -359,6 +359,11 @@ class TestHTTP(unittest.TestCase):
         cls.srv.server_close()
         cls.thread.join(timeout=5)
 
+    def setUp(self):
+        # Reset the shared rate limiter: each test gets a fresh bucket so
+        # rate-limit tests don't pollute each other.
+        spectra_server.APP.ratelimit.hits.clear()
+
     def req(self, method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port,
                                           timeout=10)
@@ -1016,6 +1021,11 @@ class TestPhotoPicker(unittest.TestCase):
         cls.srv.shutdown()
         cls.srv.server_close()
         cls.thread.join(timeout=5)
+
+    def setUp(self):
+        # Reset the shared rate limiter: each test gets a fresh bucket so
+        # rate-limit tests don't pollute each other.
+        spectra_server.APP.ratelimit.hits.clear()
 
     def req(self, method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port,

@@ -676,13 +676,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _read_json(self, max_bytes=1024 * 1024):
         # Cap request bodies: an unbounded read lets anyone (even
         # unauthenticated, on public routes) exhaust server memory.
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-        except (TypeError, ValueError):
-            return None
-        if length < 0 or length > max_bytes:
-            return None
-        raw = self.rfile.read(length) if length else b""
+        #
+        # Honor a body buffered by _require_csrf: if the CSRF check already
+        # consumed rfile (form path), the buffered copy is the real body.
+        raw = getattr(self, "_buffered_body", None)
+        if raw is None:
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                return None
+            if length < 0 or length > max_bytes:
+                return None
+            raw = self.rfile.read(length) if length else b""
         try:
             return json.loads(raw.decode() or "{}")
         except (ValueError, UnicodeDecodeError):
@@ -1258,6 +1263,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 })
                 return
             result = APP.refresh_firmware_from_releases()
+            # Sanitize errors for unauthenticated callers: exception messages
+            # can leak internal paths (staging dirs). Log full detail
+            # server-side.
+            if not result.get("ok"):
+                result = dict(result)
+                result["error"] = "firmware refresh failed, check server logs"
             self._json(200 if result["ok"] else 502, result)
             return
 
@@ -1267,12 +1278,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
             id_token = data.get("id_token", "")
+            # Rate-limit: each attempt can trigger up to 4 outbound HTTPS
+            # calls to Google plus ~9s of backoff sleep in a worker thread.
+            # Without a limit, spamming invalid tokens exhausts the threadpool.
+            if not APP.ratelimit.check("auth-token:" + self._client_ip()):
+                self._json(429, {
+                    "ok": False,
+                    "error": "too many sign-in attempts, try again later"})
+                return
             # The Google ID token is verified against the service's own
-            # OAuth client (admin-configured). No rate limit here: Google
-            # ID tokens can't be brute-forced -- forging one requires
-            # Google's signing keys -- and the endpoint is no more
-            # expensive than the other public routes. The guessable claim
-            # codes stay rate-limited.
+            # OAuth client (admin-configured). Google ID tokens can't be
+            # brute-forced -- forging one requires Google's signing keys --
+            # and the guessable claim codes stay rate-limited separately.
             try:
                 sub, email, name = APP.auth.verify_id_token(id_token)
             except AuthError as e:

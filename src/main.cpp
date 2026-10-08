@@ -327,7 +327,8 @@ void setup() {
       bool dirty = portal.run(10 * 60 * 1000);
       if (!dirty) {
         panel.sleep();
-        power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
+        power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(),
+                             false /* clock not synced yet */);
       }
       // else fall through with the new settings
     }
@@ -335,7 +336,8 @@ void setup() {
 
   // Pinned: skip everything, fast re-arm (sven97 quickSleep lesson).
   if (g_pinned && cause == WakeCause::Timer) {
-    power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
+    power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(),
+                         false /* clock not synced yet */);
   }
 
   // --- Network ---
@@ -399,7 +401,7 @@ void setup() {
   if (clockOk && power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
     Serial.println("in quiet window, sleeping through");
     panel.sleep();
-    power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
+    power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(), clockOk);
   }
 
   // --- Pairing (first boot, after unpair, or after a revoked token) ---
@@ -498,7 +500,7 @@ void setup() {
   }
 
   panel.sleep();
-  power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes());
+  power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(), clockOk);
 }
 
 void loop() {

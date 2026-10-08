@@ -15,9 +15,12 @@ struct SleepPlan {
 // tzOffsetMin: local = UTC + offset (no DST handling here; POSIX TZ string
 // in TimeSync handles DST, this takes the already-resolved offset).
 // minSleepSec / maxSleepSec: safety clamps.
+// clockOk: false when the clock is unsynced (NTP failed). The quiet-window
+// extension is skipped, since wall-clock math on garbage time is meaningless.
 SleepPlan computeSleep(uint32_t nowEpoch, uint32_t intervalSec,
                        int quietStartMin, int quietEndMin, int tzOffsetMin,
                        uint32_t minSleepSec = 60,
-                       uint32_t maxSleepSec = 7 * 24 * 3600);
+                       uint32_t maxSleepSec = 7 * 24 * 3600,
+                       bool clockOk = true);
 
 }  // namespace spectra

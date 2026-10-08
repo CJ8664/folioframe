@@ -6,10 +6,16 @@ namespace spectra {
 
 SleepPlan computeSleep(uint32_t nowEpoch, uint32_t intervalSec,
                        int quietStartMin, int quietEndMin, int tzOffsetMin,
-                       uint32_t minSleepSec, uint32_t maxSleepSec) {
+                       uint32_t minSleepSec, uint32_t maxSleepSec,
+                       bool clockOk) {
   SleepPlan plan{intervalSec, false};
   if (plan.sleepSeconds < minSleepSec) plan.sleepSeconds = minSleepSec;
   if (plan.sleepSeconds > maxSleepSec) plan.sleepSeconds = maxSleepSec;
+
+  // Without a synced clock, skip the quiet-window extension entirely:
+  // the wall-clock reading is garbage (uptime seconds), so the window
+  // check could extend sleep by hours and make the frame look dead.
+  if (!clockOk) return plan;
 
   // Where would the next refresh land, in local minutes?
   uint32_t wakeEpoch = nowEpoch + plan.sleepSeconds;

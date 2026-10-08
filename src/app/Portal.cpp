@@ -101,6 +101,7 @@ String Portal::settingsPage() {
   }
   String h = "<html><body><h2>FolioFrame settings</h2>"
              "<form method='POST' action='/save'>"
+             "<input type='hidden' name='csrf' value='" + csrfToken_ + "'>"
              "Server URL<br><input name='srv' size='60' value='" +
              escapeHtml(String(s.serverUrl)) +
              "' placeholder='https://frame.example.com'><br>"
@@ -138,12 +139,17 @@ String Portal::settingsPage() {
              "<p><form method='POST' action='/unpair' "
              "onsubmit=\"return confirm('Unpair this frame? It will need to "
              "be paired again.')\">"
+             "<input type='hidden' name='csrf' value='" + csrfToken_ + "'>"
              "<input type='submit' value='Unpair frame'></form></p>"
              "</body></html>";
   return h;
 }
 
 void Portal::handleSave() {
+  if (!checkCsrf()) {
+    server_.send(403, "text/plain", "CSRF token missing or invalid");
+    return;
+  }
   Settings s = config_->get();  // start from current
   String newSrv = server_.arg("srv");
   newSrv.trim();
@@ -180,6 +186,10 @@ void Portal::handleSave() {
 }
 
 void Portal::handleUnpair() {
+  if (!checkCsrf()) {
+    server_.send(403, "text/plain", "CSRF token missing or invalid");
+    return;
+  }
   String token = config_->deviceToken();
   bool ok = true;
   if (token.length() && client_) ok = client_->unpair(token.c_str());
@@ -190,6 +200,17 @@ void Portal::handleUnpair() {
                     "pairing code on next wake.</p></body></html>"
                   : "<html><body><p>Server unreachable, but the local token "
                     "was cleared. Re-pair on next wake.</p></body></html>");
+}
+
+bool Portal::checkCsrf() {
+  // Constant-time compare isn't critical here (token is per-boot random),
+  // but avoid trivial timing leaks anyway.
+  String got = server_.arg("csrf");
+  if (got.length() != csrfToken_.length()) return false;
+  for (size_t i = 0; i < got.length(); i++) {
+    if (got[i] != csrfToken_[i]) return false;
+  }
+  return true;
 }
 
 void Portal::handleDebug() {
@@ -209,6 +230,9 @@ void Portal::mountDebug(WebServer& server) {
 
 bool Portal::run(uint32_t timeoutMs) {
   dirty_ = false;
+  // Fresh CSRF token per portal session: POSTs to /save and /unpair must
+  // carry it, or they're rejected. Blocks CSRF from malicious LAN pages.
+  csrfToken_ = String(esp_random(), HEX) + String(esp_random(), HEX);
   server_.on("/", [this]() { server_.send(200, "text/html", settingsPage()); });
   server_.on("/save", HTTP_POST, [this]() { handleSave(); });
   server_.on("/unpair", HTTP_POST, [this]() { handleUnpair(); });

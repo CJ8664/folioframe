@@ -3,9 +3,11 @@
 Security model (docs/SYSTEM_PLAN.md section 3):
   - device_id ("ff-" + lowercase MAC) is a username, NOT a secret.
   - The device token (256-bit, server-generated at claim time) is the secret.
-    Only its SHA-256 hash is stored; the plaintext exists server-side only
-    between claim approval and the device's first successful claim poll,
-    then is wiped.
+    Only its SHA-256 hash is stored long-term. The plaintext is kept in
+    dev["pending_token"] from claim approval until the 120 s re-delivery
+    grace expires (or the next register call), then wiped. Anyone who can
+    read the store file during that window sees a live Bearer token;
+    the 0600 file mode is the mitigation.
   - Claim codes: 8 chars from an unambiguous alphabet (~43 bits entropy),
     10-minute TTL, single-use, constant-time comparison, rate-limited by the
     HTTP layer.
@@ -76,11 +78,22 @@ class RateLimiter:
     def check(self, key):
         now = time.time()
         recent = [t for t in self.hits.get(key, []) if now - t < self.window]
+        if not recent and key in self.hits:
+            # No hits left in the window: drop the key so the dict
+            # doesn't grow forever on a public server.
+            del self.hits[key]
         if len(recent) >= self.limit:
             return False
         recent.append(now)
         self.hits[key] = recent
         return True
+
+    def prune(self):
+        """Drop keys with no hits inside the window (bounds memory)."""
+        now = time.time()
+        for key in [k for k, v in self.hits.items()
+                    if not any(now - t < self.window for t in v)]:
+            del self.hits[key]
 
 
 class DeviceRegistry:

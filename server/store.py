@@ -67,6 +67,10 @@ class JsonStore(Store):
             os.makedirs(d, exist_ok=True)
         with open(tmp, "w") as f:
             json.dump(self.data, f)
+            # Ensure data hits disk before the rename: without fsync a
+            # power loss can lose recent writes or expose a zero-length file.
+            f.flush()
+            os.fsync(f.fileno())
         os.chmod(tmp, 0o600)
         os.replace(tmp, self.path)
 

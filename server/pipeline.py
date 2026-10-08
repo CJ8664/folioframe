@@ -40,6 +40,8 @@ def load_image(data: bytes) -> Image.Image:
 def cover(img: Image.Image, width: int, height: int) -> Image.Image:
     """Center-crop to the target aspect ratio, then resize (Lanczos)."""
     iw, ih = img.size
+    if iw == 0 or ih == 0:
+        raise ValueError("degenerate image (zero width or height)")
     target = width / height
     cur = iw / ih
     if cur > target:  # too wide -> crop sides

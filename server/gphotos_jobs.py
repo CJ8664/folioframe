@@ -110,11 +110,15 @@ class GooglePhotosImportWorker:
                         status="processing"):
                     raise RuntimeError("Google Photos import lease lost")
 
-            count = PickFlow(
+            count = 0
+            failed = 0
+            flow = PickFlow(
                 client, photos.cache_dir, blob_store=self.blobs,
                 blob_prefix=photos.blob_prefix,
-            ).run(job["session_id"], cleanup_session=False,
-                  on_ready=mark_importing)
+            )
+            count = flow.run(job["session_id"], cleanup_session=False,
+                             on_ready=mark_importing)
+            failed = getattr(flow, "failed", 0)
         except Exception as e:
             logger.error("Google Photos import failed (%s)", type(e).__name__)
             saved = self.store.finish_claim(
@@ -125,9 +129,18 @@ class GooglePhotosImportWorker:
                     "Could not record Google Photos import failure for user %s",
                     sub)
         else:
+            # Partial success counts: photos that downloaded are fully usable.
+            # Only mark "error" when nothing was imported at all.
+            if count > 0:
+                result = {"status": "done", "count": count, "error": ""}
+                if failed:
+                    result["partial"] = True
+                    result["failed"] = failed
+            else:
+                result = {"status": "error",
+                          "error": f"no photos imported ({failed} failed)"}
             saved = self.store.finish_claim(
-                "gphotos_imports", sub, owner,
-                {"status": "done", "count": count, "error": ""})
+                "gphotos_imports", sub, owner, result)
             if saved:
                 try:
                     client.delete_session(job["session_id"])

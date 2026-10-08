@@ -16,7 +16,10 @@ class PowerManager {
   bool inQuietNow(const Settings& s, int32_t utcOffsetMin);
 
   // Compute the sleep plan and enter deep sleep (does not return).
-  void sleepUntilNext(const Settings& s, int32_t utcOffsetMin);
+  // clockOk: false when NTP failed. With an unsynced clock the quiet-hours
+  // extension is skipped (wall-clock is garbage, so the window check would
+  // be meaningless and could oversleep by hours).
+  void sleepUntilNext(const Settings& s, int32_t utcOffsetMin, bool clockOk);
 
  private:
   Board* board_;
