@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.10"
-#define FW_BUILD 28
+#define FW_VERSION "0.0.11"
+#define FW_BUILD 29
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -314,8 +314,14 @@ void setup() {
                           "http://192.168.4.1");
       }
       portal.ensureWiFi();
-      // The settings portal runs on the home Wi-Fi: show the LAN address.
-      String url = "http://" + WiFi.localIP().toString();
+      // Show the reachable address: AP IP when in setup mode, LAN address
+      // when on home Wi-Fi. WiFi.localIP() is 0.0.0.0 in AP mode.
+      String url;
+      if (WiFi.getMode() & WIFI_AP) {
+        url = "http://" + WiFi.softAPIP().toString();
+      } else {
+        url = "http://" + WiFi.localIP().toString();
+      }
       status.showSettings(url.c_str());
       bool dirty = portal.run(10 * 60 * 1000);
       if (!dirty) {
@@ -366,7 +372,12 @@ void setup() {
   // runs on the home Wi-Fi at this point, so show the frame's real LAN
   // address -- not the setup-AP address.
   while (!s.serverUrl[0]) {
-    String url = "http://" + WiFi.localIP().toString();
+    String url;
+    if (WiFi.getMode() & WIFI_AP) {
+      url = "http://" + WiFi.softAPIP().toString();
+    } else {
+      url = "http://" + WiFi.localIP().toString();
+    }
     status.showSettings(url.c_str());
     portal.run(10 * 60 * 1000);
     config.load();  // re-read; portal saved to NVS
