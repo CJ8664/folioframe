@@ -16,8 +16,9 @@
 
 services:
   spectraframe:
-    build: .
-    image: spectraframe:latest
+    # Image is built by GitHub Actions and published to Docker Hub.
+    # Portainer pulls it — no local build needed.
+    image: erchiragjain92/folioframe:latest
     container_name: spectraframe
     ports:
       - "8765:8765"
