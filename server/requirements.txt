@@ -1,5 +1,6 @@
 Pillow>=9
 google-auth>=2
+requests>=2
 epaper-dithering>=6.0
 fastapi>=0.110,<1
 uvicorn>=0.27,<1

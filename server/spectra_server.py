@@ -1793,8 +1793,7 @@ def WELCOME_HTML():
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <title>FolioFrame</title>
 """ + PWA_HEAD + THEME_CSS + """
-#err{margin-top:10px}
-</style>
+<style>#err{margin-top:10px}</style>
 <script src='https://accounts.google.com/gsi/client' async defer></script>
 </head><body>
 <div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
