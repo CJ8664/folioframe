@@ -15,3 +15,4 @@ WORKDIR /app/server
 # baked in -- production config comes from mounted config or env.
 EXPOSE 8080
 CMD ["python3", "spectra_server.py"]
+# Deploy verification trigger
