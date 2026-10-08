@@ -66,7 +66,7 @@ class AuthManager:
         self.secret = self._load_secret()
 
     def _load_secret(self):
-        # Stable across restarts: kept in the store (Firestore on Cloud Run).
+        # Stable across restarts: kept in the local store.
         # One-time migration from the legacy local file.
         secret_hex = self.store.get("_service", "session_secret")
         if secret_hex:

@@ -1,9 +1,11 @@
 # SpectraFrame self-hosting guide (Docker)
 
-The service is a single Python container with zero cloud dependencies by
-default: local JSON registry, on-disk photo storage, Google sign-in verified
-directly against Google's keys. Firebase is strictly opt-in
-(`docs/FIREBASE.md`); nothing here needs it.
+The service is a single Python container that can run on any Docker host or
+Python-capable server. It uses a local JSON registry and on-disk photo storage
+in its writable data directory. Keep that directory on persistent storage and
+run one service instance; ephemeral disks or multiple uncoordinated instances
+can lose or diverge application state. The Docker Compose stack mounts a
+persistent volume for local data so it survives container restarts.
 
 ## What you need
 
@@ -89,6 +91,8 @@ docker compose up -d
 Your data (devices, pairings, photos) lives in the `spectra-data` volume
 and survives image updates. For a local source build, use
 `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`.
+For deployments outside Docker, run `python3 server/spectra_server.py` and
+provide a writable persistent `server/data/` directory.
 
 ## GitHub Actions deployment
 

@@ -128,7 +128,8 @@ When `X-CSRF-Token` header is absent, code reads entire body looking for form fi
 8. Load testing: concurrent frame fetches, large uploads
 9. Mobile-specific UI tests
 
-**30 specific test cases** documented in `REVIEW_TESTING.md`.
+**30 specific test cases** documented in
+[`REVIEW_TESTING.md`](../reviews/REVIEW_TESTING.md).
 
 ---
 
@@ -208,8 +209,8 @@ Per Chirag's requirement: verify 2-3 times using subagents or neutral sessions.
 
 ## Review Documents
 
-- `REVIEW_SERVER.md` — full server review (21 KB)
-- `REVIEW_FIRMWARE.md` — full firmware review
-- `REVIEW_WEBUI.md` — full web UI review
-- `REVIEW_TESTING.md` — testing gap analysis
-- `COMPREHENSIVE_PLAN.md` — this document
+- [`REVIEW_SERVER.md`](../reviews/REVIEW_SERVER.md) — full server review
+- [`REVIEW_FIRMWARE.md`](../reviews/REVIEW_FIRMWARE.md) — full firmware review
+- [`REVIEW_WEBUI.md`](../reviews/REVIEW_WEBUI.md) — full web UI review
+- [`REVIEW_TESTING.md`](../reviews/REVIEW_TESTING.md) — testing gap analysis
+- [`COMPREHENSIVE_PLAN.md`](./COMPREHENSIVE_PLAN.md) — this document

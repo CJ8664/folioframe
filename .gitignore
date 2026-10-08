@@ -5,11 +5,8 @@ __pycache__/
 *.pyc
 .DS_Store
 state.json
-__pycache__/
 server/.gphotos_token.json
 server/data/
 server/.session_secret
-server/data/
-server/.gphotos_token.json
 
 server/config.json

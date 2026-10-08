@@ -1,10 +1,8 @@
 """Pluggable token persistence for OAuth token sets.
 
 FileTokenStore: local JSON file (0600) -- local dev, home lab.
-StoreTokenStore: tokens live in the server Store (JsonStore locally,
-Firestore on Cloud Run), one entry per user -- this is what the server
-uses for per-user Google Photos tokens, so both backends share one code
-path and there is no separate Firestore document plumbing to get wrong.
+StoreTokenStore: tokens live in the server Store (JsonStore), one entry per
+user. The server uses this for per-user Google Photos tokens.
 """
 import json
 import os
@@ -51,7 +49,7 @@ class StoreTokenStore(TokenStore):
     """OAuth tokens keyed per user inside the server Store.
 
     collection "photos_tokens", key = Google sub. Works unchanged on
-    JsonStore (local) and FirestoreStore (Cloud Run).
+    JsonStore.
     """
 
     def __init__(self, store, sub):

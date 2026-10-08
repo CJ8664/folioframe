@@ -93,8 +93,8 @@ notes), is in [docs/SECURITY.md](docs/SECURITY.md).
 
 - [PROTOCOL.md](PROTOCOL.md) — the versioned device↔server contract
 - [docs/SECURITY.md](docs/SECURITY.md) — threat model and hardening notes
-- [docs/SELFHOST.md](docs/SELFHOST.md) — deploying the server (Docker,
-  Firebase/Cloud Run is opt-in)
+- [docs/SELFHOST.md](docs/SELFHOST.md) — deploying the server on Docker or
+  another Python-capable host
 - [docs/GOOGLE_PHOTOS.md](docs/GOOGLE_PHOTOS.md) — the one-time Google setup
 - [docs/HARDWARE_CHECKLIST.md](docs/HARDWARE_CHECKLIST.md) — bringing up the
   EE02 + panel hardware

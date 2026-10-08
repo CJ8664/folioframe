@@ -117,11 +117,12 @@ def configure_logging():
 
 configure_logging()
 from sources import SOURCES
-from sources.google_photos import (GPhotosController, PickerClient, PickFlow)
+from sources.google_photos import GPhotosController
+from gphotos_jobs import GooglePhotosImportWorker
 from auth import AuthManager, AuthError, SESSION_COOKIE
 from devices import DeviceRegistry, AlreadyPaired, BadClaim, RateLimiter
-from store import JsonStore, FirestoreStore
-from blobs import LocalBlobStore, GCSBlobStore
+from store import JsonStore
+from blobs import LocalBlobStore
 from token_store import StoreTokenStore
 from firmware_releases import FirmwareReleaseUpdater
 
@@ -195,7 +196,6 @@ class Server:
             logger.info(f"wrote default {cfg_path}")
         with open(cfg_path) as f:
             self.cfg = json.load(f)
-        # Cloud Run: full config via env (values can come from Secret Manager).
         # Top-level keys in SPECTRA_CONFIG_JSON replace the file's keys.
         env_cfg = os.environ.get("SPECTRA_CONFIG_JSON")
         if env_cfg:
@@ -205,27 +205,10 @@ class Server:
         # optionally restricts which Google accounts may sign in
         # (empty = anyone; accounts are isolated per user).
 
-        # ---- Firebase mode ------------------------------------------------
-        # Enabled when config has firebase.project_id. On Cloud Run this
-        # switches persistence to Firestore + Cloud Storage; without it
-        # everything stays local (dev/home lab). Auth is direct Google
-        # ID-token verification on both backends (no Firebase Auth setup).
-        self.firebase_cfg = self.cfg.get("firebase", {})
-        self.firebase_on = bool(self.firebase_cfg.get("project_id"))
         self.public_url = (self.cfg.get("public_url")
-                           or self.firebase_cfg.get("public_url")
                            or os.environ.get("PUBLIC_URL", "")).rstrip("/")
-
-        if self.firebase_on:
-            project = self.firebase_cfg["project_id"]
-            self.store = FirestoreStore(project_id=project)
-            bucket = self.firebase_cfg.get("storage_bucket",
-                                           f"{project}.appspot.com")
-            self.blobs = GCSBlobStore(bucket)
-        else:
-            self.store = JsonStore(os.path.join(self.data_dir,
-                                                "registry.json"))
-            self.blobs = LocalBlobStore(self.data_dir)
+        self.store = JsonStore(os.path.join(self.data_dir, "registry.json"))
+        self.blobs = LocalBlobStore(self.data_dir)
 
         # Rotation state lives in the store so it survives container
         # restarts; one-time import from the legacy state.json file.
@@ -248,6 +231,8 @@ class Server:
         self._shared_sources = {}  # name -> Source (stateless, shared)
         self._photos = {}          # google sub -> GPhotosController
         self._frames = {}          # device_id -> current frame slot
+        self.gphotos_imports = GooglePhotosImportWorker(
+            self.store, self.blobs, self.photos_for)
         # OTA build number fallback (config/env); the BUILD file
         # (written by package_firmware.sh from the firmware's FW_BUILD)
         # wins and is re-read on every access so firmware can be
@@ -481,24 +466,7 @@ class Server:
             raise RuntimeError("Google Photos isn't set up on this server yet")
         if not gp.oauth.connected:
             raise RuntimeError("Google Photos not connected")
-        client = PickerClient(gp.oauth)
-        session = client.create_session()
-        gp.pick_state = {"session_id": session["id"],
-                         "picker_uri": session["pickerUri"],
-                         "status": "waiting", "count": 0, "error": ""}
-
-        def run():
-            try:
-                n = PickFlow(client, gp.cache_dir, blob_store=self.blobs,
-                             blob_prefix=gp.blob_prefix).run(session["id"])
-                gp.pick_state.update(status="done", count=n)
-            except Exception as e:
-                logger.error("Google Photos import failed (%s)",
-                             type(e).__name__)
-                gp.pick_state.update(status="error", error=str(e))
-
-        threading.Thread(target=run, daemon=True).start()
-        return gp.pick_state["picker_uri"]
+        return self.gphotos_imports.queue(sub, gp)
 
     # ---- per-device rotation -------------------------------------------
     def _in_quiet_now(self):
@@ -518,9 +486,8 @@ class Server:
         if item is None:
             raise RuntimeError(f"source {name}: no items")
         img = src.load(item)
-        frame = pipeline.process_image(img, W, H,
-                                       self.cfg.get("dither", "floyd"),
-                                       self.cfg.get("tone"))
+        frame = pipeline.process_image(
+            img, W, H, self.cfg.get("dither", "floyd"))
         self._frames[dev["device_id"]] = {
             "frame": frame,
             "etag": pipeline.frame_etag(frame),
@@ -555,8 +522,7 @@ class Server:
         """(frame_bytes, etag): pinned override wins, else the device's own
         rotation slot.
 
-        Lazy rotation on wake: on Cloud Run instances scale to zero, so
-        rotation must also happen here, not only on the background thread.
+        Lazy rotation on wake keeps frames fresh while the service runs.
         """
         slot = self._frames.get(dev["device_id"])
         if slot is None:
@@ -601,9 +567,8 @@ class Server:
 
     def set_override(self, device_id, img):
         """Pin an uploaded PIL image as this device's frame. Returns etag."""
-        frame = pipeline.process_image(img, W, H,
-                                       self.cfg.get("dither", "floyd"),
-                                       self.cfg.get("tone"))
+        frame = pipeline.process_image(
+            img, W, H, self.cfg.get("dither", "floyd"))
         etag = pipeline.frame_etag(frame)
         self.blobs.put(f"devices/{device_id}/override.frame", frame,
                        "application/octet-stream")
@@ -966,8 +931,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Public client config. The Google OAuth client ID is designed
             # to be public (it appears in the page's JavaScript); the client
             # secret is never exposed here.
-            self._json(200, {"firebase": APP.firebase_cfg.get("web", {}),
-                             "google_client_id": APP.auth.client_id})
+            self._json(200, {
+                "google_client_id": APP.auth.client_id,
+            })
             return
 
         if p == "/login":
@@ -1264,11 +1230,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             _, _, sub = got
             gp = APP.photos_for(sub)
-            ps = gp.pick_state or {}
+            ps = APP.store.get("gphotos_imports", sub) or {}
             self._json(200, {
                 "connected": gp.oauth.connected,
                 "cached": gp.cache_count(),
-                "picking": ps.get("status") == "waiting",
+                "picking": ps.get("status") in ("waiting", "processing"),
                 "picker_uri": ps.get("picker_uri", ""),
                 "pick_status": ps.get("status", ""),
                 "pick_count": ps.get("count", 0),
@@ -1839,7 +1805,7 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
     <h1>FolioFrame</h1>
     <p class='tag'>Your memories, floating on glass.</p>
     <div id='gbtn'></div>
-    <p id='err' class='err'></p>
+    <p id='err' class='err' role='status' aria-live='polite'></p>
     <p class='fine'>Takes about 30 seconds. We never see your Google password.<span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About sign-in'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>Sign-in happens in Google’s own popup. FolioFrame only receives a basic profile token — never your password.</span></span><br>
     <span id='https-note' style='display:none'>Heads up: Google sign-in needs
     this page over HTTPS (or localhost).</span></p>
@@ -1903,7 +1869,11 @@ function initGis(cid){
 window.addEventListener('load',function(){
   fetch('/api/config').then(r=>r.json()).then(c=>{
     var cid=c.google_client_id||'';
-    if(!cid){showError('This server is not set up yet.');return;}
+    if(!cid){
+      showError('Google sign-in is not configured. Ask the server admin to '
+        +'set google.client_id and google.client_secret in SPECTRA_CONFIG_JSON.');
+      return;
+    }
     initGis(cid);
   }).catch(()=>showError('Could not reach the server. Please try again.'));
 });
@@ -2295,8 +2265,10 @@ async function renderPhotos(){
       <p class='msg' id='photos-msg'></p>`;
   }else{
     let st='';
-    if(g.picking)
+    if(g.pick_status==='waiting')
       st=`<p class='msg'>Picker open — <a style='color:#fff' href='${esc(g.picker_uri)}' target='_blank' rel='noopener'>continue choosing photos</a>, then come back here.</p>`;
+    else if(g.pick_status==='processing')
+      st=`<p class='msg'>Importing your selected photos…</p>`;
     else if(g.pick_status==='error')
       st=`<p class='msg err'>Couldn't finish picking: ${esc(g.pick_error)} Please try again.</p>`;
     sub.textContent='Connected — your picks live on this server.';
@@ -2305,7 +2277,7 @@ async function renderPhotos(){
       <span class='muted'> &middot; ${g.cached} photo${g.cached==1?'':'s'} ready for your frame</span></p>
       ${st}
       <div class='btnrow'>
-        <button class='btn btn-primary' onclick='gpick()'>Pick more photos</button>
+        <button class='btn btn-primary' onclick='gpick()' ${g.pick_status==='processing'?'disabled':''}>${g.pick_status==='processing'?'Importing photos…':'Pick more photos'}</button>
         <button class='btn btn-ghost' onclick='gdisc()'>Disconnect</button>
       </div>
       <p class='msg' id='photos-msg'></p>`;
@@ -2590,6 +2562,7 @@ async def lifespan(_application):
     _rotation_thread = threading.Thread(
         target=rotation_loop, name="frame-rotation", daemon=True)
     _rotation_thread.start()
+    APP.gphotos_imports.start()
 
     def refresh_firmware_on_startup():
         try:
@@ -2614,6 +2587,7 @@ async def lifespan(_application):
     finally:
         _rotation_stop.set()
         _rotation_thread.join(timeout=5)
+        APP.gphotos_imports.stop()
         firmware_thread.join(timeout=5)
         logger.info("FolioFrame service stopped")
 

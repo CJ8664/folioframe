@@ -36,6 +36,20 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 # call fail; verified against the official Picker docs 2026-10-04.
 PICKER_BASE = "https://photospicker.googleapis.com/v1"
 SCOPE = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
+MAX_RESPONSE_BYTES = 25 * 1024 * 1024
+
+
+def _read_bounded(response):
+    body = bytearray()
+    while len(body) <= MAX_RESPONSE_BYTES:
+        chunk = response.read(min(64 * 1024,
+                                 MAX_RESPONSE_BYTES + 1 - len(body)))
+        if not chunk:
+            break
+        body.extend(chunk)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise RuntimeError("Google Photos response exceeded 25 MB limit")
+    return bytes(body)
 
 
 def _http(method, url, headers=None, data=None):
@@ -44,9 +58,9 @@ def _http(method, url, headers=None, data=None):
                                  method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, r.read()
+            return r.status, _read_bounded(r)
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, _read_bounded(e)
 
 
 def _parse_duration(s):
@@ -277,10 +291,11 @@ class PickFlow:
         if blob_store is None:
             os.makedirs(cache_dir, exist_ok=True)
 
-    def run(self, session_id, poll=None):
-        """Poll until mediaItemsSet (or timeout), import, delete session.
+    def run(self, session_id, poll=None, cleanup_session=True, on_ready=None):
+        """Poll until mediaItemsSet, import, and optionally delete session.
 
         poll: optional callable(seconds) replacing time.sleep (for tests).
+        cleanup_session=False leaves the session available for a retry.
         Returns the number of imported photos.
         """
         sleep = poll or time.sleep
@@ -297,6 +312,8 @@ class PickFlow:
             if time.time() >= deadline:
                 raise TimeoutError("picker session timed out")
             sleep(interval)
+        if on_ready is not None:
+            on_ready()
         count = 0
         page_token = None
         # Google's Picker API is eventually consistent: mediaItemsSet may be
@@ -308,77 +325,71 @@ class PickFlow:
                 break
             sleep(min(2.0 * (attempt + 1), 10.0))
         first = True
-        try:
-            while count < self.max_items:
-                # First iteration reuses the page from the retry above;
-                # subsequent iterations fetch the next page.
-                if not first:
-                    resp = self.client.list_media_items(session_id,
-                                                        page_token)
-                first = False
-                for item in resp.get("mediaItems", []):
-                    if count >= self.max_items:
-                        break
-                    # Picker API nests file details under item["mediaFile"]:
-                    # {id, createTime, type, mediaFile: {baseUrl, mimeType,
-                    #  filename, mediaFileMetadata}}. Top-level baseUrl/
-                    # mimeType do not exist.
-                    mf = item.get("mediaFile") or {}
-                    mt = mf.get("mimeType", "")
-                    # Only skip when mimeType is explicitly non-image
-                    # (e.g. video/*); empty means unknown, try anyway.
-                    if mt and not mt.startswith("image/"):
-                        continue  # photo frame: images only
-                    base_url = mf.get("baseUrl")
-                    if not base_url:
-                        continue
-                    data = self.client.download(base_url)
-                    ext = ".jpg" if "jpeg" in mt else ".png"
-                    name = item["id"] + ext
-                    # Capture metadata for display rendering (date, filename,
-                    # dimensions). Stored as JSON sidecar alongside the image.
-                    mf_meta = mf.get("mediaFileMetadata") or {}
-                    photo_meta = mf_meta.get("photoMetadata") or {}
-                    metadata = {
-                        "id": item["id"],
-                        "createTime": item.get("createTime"),
-                        "filename": mf.get("filename"),
-                        "mimeType": mt or "image/jpeg",
-                        "width": mf_meta.get("width"),
-                        "height": mf_meta.get("height"),
-                        "cameraMake": mf_meta.get("cameraMake"),
-                        "cameraModel": mf_meta.get("cameraModel"),
-                        "focalLength": photo_meta.get("focalLength"),
-                        "aperture": photo_meta.get("apertureFNumber"),
-                        "iso": photo_meta.get("isoEquivalent"),
-                        "exposureTime": photo_meta.get("exposureTime"),
-                        # Note: location/GPS is NOT available via Picker API.
-                        # Google strips location metadata from downloads
-                        # for privacy. Album info is also not available
-                        # (picker selects individual items, not albums).
-                        "source": "google_photos",
-                        "downloadedAt": time.strftime(
-                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    }
-                    meta_json = json.dumps(metadata).encode()
-                    meta_name = item["id"] + ".meta.json"
-                    if self.blob_store is not None:
-                        self.blob_store.put(self.blob_prefix + name, data,
-                                            mt or "image/jpeg")
-                        self.blob_store.put(self.blob_prefix + meta_name,
-                                            meta_json, "application/json")
-                    else:
-                        with open(os.path.join(self.cache_dir, name),
-                                  "wb") as f:
-                            f.write(data)
-                        with open(os.path.join(self.cache_dir, meta_name),
-                                  "wb") as f:
-                            f.write(meta_json)
-                    count += 1
-                page_token = resp.get("nextPageToken")
-                if not page_token:
+        while count < self.max_items:
+            # First iteration reuses the page from the retry above;
+            # subsequent iterations fetch the next page.
+            if not first:
+                resp = self.client.list_media_items(session_id, page_token)
+            first = False
+            for item in resp.get("mediaItems", []):
+                if count >= self.max_items:
                     break
-        finally:
+                # Picker API nests file details under item["mediaFile"]:
+                # {id, createTime, type, mediaFile: {baseUrl, mimeType,
+                # filename, mediaFileMetadata}}. Top-level baseUrl/
+                # mimeType do not exist.
+                mf = item.get("mediaFile") or {}
+                mt = mf.get("mimeType", "")
+                # Only skip when mimeType is explicitly non-image
+                # (e.g. video/*); empty means unknown, try anyway.
+                if mt and not mt.startswith("image/"):
+                    continue
+                base_url = mf.get("baseUrl")
+                if not base_url:
+                    continue
+                data = self.client.download(base_url)
+                ext = ".jpg" if "jpeg" in mt else ".png"
+                name = item["id"] + ext
+                # Capture metadata for display rendering (date, filename,
+                # dimensions). Stored as JSON sidecar alongside the image.
+                mf_meta = mf.get("mediaFileMetadata") or {}
+                photo_meta = mf_meta.get("photoMetadata") or {}
+                metadata = {
+                    "id": item["id"],
+                    "createTime": item.get("createTime"),
+                    "filename": mf.get("filename"),
+                    "mimeType": mt or "image/jpeg",
+                    "width": mf_meta.get("width"),
+                    "height": mf_meta.get("height"),
+                    "cameraMake": mf_meta.get("cameraMake"),
+                    "cameraModel": mf_meta.get("cameraModel"),
+                    "focalLength": photo_meta.get("focalLength"),
+                    "aperture": photo_meta.get("apertureFNumber"),
+                    "iso": photo_meta.get("isoEquivalent"),
+                    "exposureTime": photo_meta.get("exposureTime"),
+                    "source": "google_photos",
+                    "downloadedAt": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                meta_json = json.dumps(metadata).encode()
+                meta_name = item["id"] + ".meta.json"
+                if self.blob_store is not None:
+                    self.blob_store.put(self.blob_prefix + name, data,
+                                        mt or "image/jpeg")
+                    self.blob_store.put(self.blob_prefix + meta_name,
+                                        meta_json, "application/json")
+                else:
+                    with open(os.path.join(self.cache_dir, name),
+                              "wb") as f:
+                        f.write(data)
+                    with open(os.path.join(self.cache_dir, meta_name),
+                              "wb") as f:
+                        f.write(meta_json)
+                count += 1
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        if cleanup_session:
             try:
                 self.client.delete_session(session_id)
             except Exception:
@@ -392,8 +403,7 @@ class GooglePhotosSource(Source):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        # Server injects a BlobStore here for Cloud Run deployments where
-        # local disk is ephemeral; otherwise the plain cache dir is used.
+        # The server injects its local blob store; tests may use a cache dir.
         self.blob_store = cfg.get("blob_store")
         # Honor the caller's prefix (the per-user "users/{sub}/gphotos/"
         # the pick flow writes to); default keeps local/test behavior.
@@ -493,13 +503,10 @@ class GPhotosController:
         self.blob_prefix = blob_prefix
         self.cache_dir = cache_dir or default_cache_dir()
         self._http = http
-        # OAuth states: persisted in the store when available so the
-        # callback survives a restart / lands on another Cloud Run
-        # instance; in-memory otherwise (tests, minimal setups).
+        # Persist OAuth state so the callback survives a service restart.
         self._state_store = store
         self._states_key = states_key
         self._mem_states = {} if store is None else None
-        self.pick_state = None  # {session_id, picker_uri, status, count, error}
         self.source = GooglePhotosSource({
             "blob_store": blob_store,
             "blob_prefix": blob_prefix,

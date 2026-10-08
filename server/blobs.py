@@ -1,11 +1,4 @@
-"""Blob storage abstraction.
-
-LocalBlobStore: files under a root dir (local dev, home lab).
-GCSBlobStore: Google Cloud Storage bucket (Firebase/Cloud Run).
-
-Used for device override frames/previews and the Google Photos cache --
-both must survive container restarts, so Cloud Run deployments use GCS.
-"""
+"""Filesystem blob storage for device overrides and the Google Photos cache."""
 import os
 
 
@@ -70,32 +63,3 @@ class LocalBlobStore(BlobStore):
                 if key.startswith(prefix):
                     out.append(key)
         return sorted(out)
-
-
-class GCSBlobStore(BlobStore):
-    def __init__(self, bucket_name, client=None):
-        if client is None:
-            from google.cloud import storage as gcs
-            client = gcs.Client()
-        self._client = client
-        self._bucket = self._client.bucket(bucket_name)
-
-    def put(self, key, data, content_type="application/octet-stream"):
-        self._bucket.blob(key).upload_from_string(
-            data, content_type=content_type)
-
-    def get(self, key):
-        blob = self._bucket.blob(key)
-        return blob.download_as_bytes() if blob.exists() else None
-
-    def exists(self, key):
-        return self._bucket.blob(key).exists()
-
-    def delete(self, key):
-        blob = self._bucket.blob(key)
-        if blob.exists():
-            blob.delete()
-
-    def list(self, prefix):
-        return sorted(b.name for b in
-                      self._client.list_blobs(self._bucket, prefix=prefix))

@@ -79,22 +79,19 @@ Never accept an unverified/decoded JWT — that is a full authentication bypass
 
 ### 2.4 Hosting options
 
-| | **Firebase (recommended)** | Home lab (Proxmox/umbrelOS) | Plain VPS |
-|---|---|---|---|
-| Public reachability | Built in (Hosting + Cloud Run) | Needs tunnel (Tailscale/CF); Proxmox currently unreachable from here | Built in |
-| Google sign-in | Firebase Auth, free, zero crypto code | Self-implement OIDC verification | Self-implement |
-| TLS cert | Automatic (Google Trust Services) | Let's Encrypt via DNS-01 or tunnel | Let's Encrypt |
-| Cost | Spark free tier covers 1 user + a few devices easily | $0 (existing hardware) | ~$5/mo |
-| Data locality | Google's cloud | Your house | Provider's cloud |
-| Effort | Port server to Cloud Run + Firestore | Docker + tunnel + OIDC + certs | Docker + OIDC + certs |
+| | Home lab (Proxmox/umbrelOS) | Plain VPS |
+|---|---|---|
+| Public reachability | Needs a tunnel or reverse proxy | Built in |
+| Google sign-in | Google OAuth ID-token verification | Google OAuth ID-token verification |
+| TLS cert | Let's Encrypt via DNS-01 or tunnel | Let's Encrypt |
+| Cost | $0 on existing hardware | ~$5/mo |
+| Data locality | Your house | Provider's cloud |
+| Effort | Docker + tunnel + certs | Docker + certs |
 
-**Recommendation:** Firebase primary. Reasons: (a) the device must reach the
-service from anywhere — Firebase is public by default; (b) Google sign-in is
-the headline requirement and Firebase Auth implements it correctly for free;
-(c) Chirag already deploys to Firebase with OIDC (pregnancy app) — familiar
-flow. Keep the server's storage behind an interface so a **self-hosted Docker
-variant** can follow later without a rewrite. **Decision needed:** confirm
-Firebase, or pick home-lab-first.
+**Current direction:** deploy the portable Docker/Python service on a host
+with persistent local storage. Google sign-in and Google Photos use Google's
+OAuth APIs; application state does not depend on a Firebase project or
+Firebase services.
 
 ## 3. Architecture
 
@@ -234,7 +231,7 @@ last-seen time and next expected check-in so the wait is visible, not mysterious
    old `setInsecure()` path is deleted.
 5. *Can one user's device see another's photos?* Token → device → owner lookup
    on every request; device IDs are non-enumerable for data access (404 on
-   mismatch). Firestore rules mirror this: `request.auth.uid == resource.data.owner`.
+   mismatch).
 6. *Session theft?* `httpOnly`+`Secure`+`SameSite=Lax` cookies, CSRF tokens on
    state-changing routes, 24-h session expiry with re-verification.
 7. **Residual risk (accepted, documented):** a device on an attacker-controlled
@@ -273,7 +270,7 @@ to Bearer auth + validated TLS).
 | Google sign-in + sessions | None (open server) | **New**: `auth.py` — ID-token verification per §2.2, session cookies, CSRF |
 | Device registry + token hashes | None | **New**: `devices.py` — register/claim/revoke, SHA-256 token storage |
 | Per-device photo state | Single global source/state | **Change**: rotation state + ETag keyed by device_id |
-| Storage abstraction (JSON now, Firestore later) | Direct JSON files | **New**: `store.py` interface with `JsonStore` impl; `FirestoreStore` later |
+| Persistent local storage | Direct JSON files | **New**: `store.py` interface with `JsonStore` impl |
 | Per-user Google Photos OAuth | Single global token file | **Change**: tokens keyed by user `sub` |
 | Web console pairing/management UI | Source cards only | **Extend**: login, device list, claim page, per-device config |
 
@@ -297,18 +294,12 @@ keeping it would violate the hard requirement.
   checklist re-run.
 - **Phase 3 — Per-device management.** Per-device sources/ETags, per-user
   Google Photos tokens, upload/preview/refresh in the console.
-- **Phase 4 — Hosting + hardening (code complete 2026-10-02, deploy pending).**
-  Firebase backend implemented behind the storage/auth/blob abstractions:
-  Firestore (`store.py:FirestoreStore`), Cloud Storage (`blobs.py:GCSBlobStore`),
-  Firebase Auth ID-token verification (`auth.py`, provider `firebase`), Hosting
-  rewrites → Cloud Run (`firebase.json`), deny-all Firestore/Storage rules,
-  lazy rotation for scale-to-zero, OAuth tokens in Firestore. Local dev without
-  `firebase.project_id` is byte-for-byte the old behavior. Runbook:
-  `docs/FIREBASE.md`. Blocked on: Firebase project creation + Blaze upgrade
-  (billing attach — Chirag's click). After deploy, run the §4 checklist as
-  live adversarial tests.
-- **Phase 5 (later, optional).** Docker-Compose self-hosted variant for the
-  home lab once umbrelOS lands.
+- **Phase 4 — Hosting + hardening.** Docker-based hosting and local persistent
+  storage are the supported deployment model. Firebase storage/deployment
+  integrations were removed on 2026-10-08; Google OAuth for sign-in and Photos
+  remains independent of Firebase.
+- **Phase 5 — Self-hosting.** Docker Compose and direct Python deployment are
+  documented in `docs/SELFHOST.md`.
 
 **Estimate:** Phases 0–3 are the build; Phase 4 is deploy + adversarial test.
 No calendar promises — each phase reports its verification before the next
@@ -316,12 +307,10 @@ starts, per the standing proof-checklist rule.
 
 ## 7. Decisions (recorded 2026-10-02)
 
-1. **Hosting: Firebase.** Proceeding with Firebase (Cloud Run + Firestore;
-   sign-in is direct Google ID-token verification with each user's own OAuth
-   client -- no Firebase Authentication setup);
-   keeping the server portable via the storage abstraction so a self-hosted
-   Docker variant stays possible. If any Firebase step proves hard, flag it
-   instead of pushing through.
+1. **Hosting: portable self-hosted service.** Use Docker or a Python-capable
+   host with persistent local storage. Google sign-in uses verified Google
+   ID tokens and Google Photos uses Google's OAuth APIs; neither requires
+   Firebase Authentication or Firebase-managed storage.
 2. **One device ↔ one user, strictly.** A device has exactly one owner at any
    time. Claiming an already-paired device fails unless the current owner
    unpairs it first (or the device is factory-reset, which revokes its token).

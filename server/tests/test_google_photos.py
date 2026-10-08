@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from PIL import Image
 
 from sources.google_photos import (GoogleOAuth, PickerClient, PickFlow,
-                                   _parse_duration, PICKER_BASE)
+                                   _parse_duration, _read_bounded,
+                                   PICKER_BASE)
 from sources.google_photos import GooglePhotosSource
 
 
@@ -49,6 +50,17 @@ class TestParseDuration(unittest.TestCase):
         self.assertEqual(_parse_duration(""), 0.0)
         self.assertEqual(_parse_duration(None), 0.0)
         self.assertEqual(_parse_duration("bogus"), 0.0)
+
+
+class TestBoundedResponse(unittest.TestCase):
+    def test_response_size_is_capped(self):
+        from io import BytesIO
+        from unittest.mock import patch
+
+        with patch("sources.google_photos.MAX_RESPONSE_BYTES", 3):
+            self.assertEqual(_read_bounded(BytesIO(b"abc")), b"abc")
+            with self.assertRaises(RuntimeError):
+                _read_bounded(BytesIO(b"abcd"))
 
 
 class TestOAuth(unittest.TestCase):
@@ -236,6 +248,45 @@ class TestPickFlow(unittest.TestCase):
                 [{}, {}])
             with self.assertRaises(TimeoutError):
                 flow.run("sess1", poll=lambda s: None)
+
+    def test_on_ready_runs_before_media_import(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flow, _ = self._flow(
+                tmp, [{"mediaItemsSet": True}],
+                [{"mediaItems": [{"id": "p1", "mediaFile": {
+                    "baseUrl": "https://x/p1",
+                    "mimeType": "image/jpeg",
+                }}]}])
+            ready = []
+            flow.run("sess1", on_ready=lambda: ready.append(True))
+            self.assertEqual(ready, [True])
+
+    def test_failed_import_keeps_session_for_idempotent_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flow, calls = self._flow(
+                tmp,
+                [{"mediaItemsSet": True}],
+                [{"mediaItems": [{
+                    "id": "p1",
+                    "type": "TYPE_IMAGE",
+                    "mediaFile": {
+                        "baseUrl": "https://x/p1",
+                        "mimeType": "image/jpeg",
+                    },
+                }]}])
+            download = flow.client.download
+
+            def fail(_base_url):
+                raise RuntimeError("temporary download failure")
+
+            flow.client.download = fail
+            with self.assertRaisesRegex(RuntimeError, "temporary"):
+                flow.run("sess1")
+            self.assertEqual(calls["deletes"], 0)
+
+            flow.client.download = download
+            self.assertEqual(flow.run("sess1"), 1)
+            self.assertEqual(calls["deletes"], 1)
 
 
 class TestSource(unittest.TestCase):
