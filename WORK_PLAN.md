@@ -30,32 +30,33 @@ resume without relying on chat history.
 ## Current session state
 
 - Working tree: branch `align-firmware-ui-with-mockups`.
-- Latest committed branch update: `8d75fa6` (`Update work tracker with pull
-  request status`); implementation commit `6665aa6` is pushed to
-  `origin/align-firmware-ui-with-mockups`.
+- Latest local commit: `1919fe0` (`Merge latest main deployment trigger`).
+  The branch also contains the merge of `e9afa72` and is up to date with
+  `origin/main` at `6737325`; the new commits are not yet pushed.
 - The PR exists as #1 and targets `main`. The branch tracks its remote.
-  A merge of `e9afa72` is being resolved locally; `origin/main` has since
-  advanced to `c303a42`. The PR is not merged.
+  The PR is still open and unmerged; push and GitHub-side checks remain.
 - Exactly two top-level mockup files are present. The eight former standalone
   service mockups are no longer present; only the device mockup was tracked.
 - The firmware refresh endpoint, startup refresh, and three workflows are
   committed and pushed. Their live GitHub Actions, release publishing, and
   Portainer deployment behavior have not yet been confirmed.
-- GitHub CLI is unauthenticated (checked 2026-10-08). PR #1 was created by the
-  user. Earlier checks reported success for GitGuardian and CodeQL, with no
-  review comments or approvals; these checks predate the current local edits.
-  Preserve the current Docker Hub image and Git-managed Portainer redeploy
-  flow from `main`.
+- GitHub CLI is unauthenticated (checked 2026-10-08). Earlier PR checks
+  reported success for GitGuardian and CodeQL, with no review comments or
+  approvals; those checks predate these local commits. Preserve the current
+  Docker Hub/Git-managed Portainer flow and its required Cloudflare
+  `CF_BYPASS_HEADER` secret.
 - `build/` and `.pio/` contain generated artifacts; leave them ignored and do
   not stage them.
 - The root review/verification Markdown files are tracked historical reports;
   they have cross-references, so retain them rather than moving or deleting
   them without a separate reference migration.
-- Latest validation: server suite 138/138, firmware native suite 7/7, and
-  PlatformIO `ee02` build passed. Release artifacts are packaged as firmware
-  0.0.12/build 30. `tools/stub_compile.sh` previously failed because its
-  existing Arduino stubs omit APIs/types used by current sources; the real
-  PlatformIO build passes.
+- Latest validation: server suite 138/138, firmware native suite 7/7,
+  PlatformIO `ee02` build, firmware artifact checks, Python/shell compilation,
+  workflow YAML parsing, Compose config, and `git diff --check` passed.
+  Release artifacts are packaged as firmware 0.0.12/build 30.
+  `tools/stub_compile.sh` previously failed because its existing Arduino
+  stubs omit APIs/types used by current sources; the real PlatformIO build
+  passes.
 
 ## Work items
 
@@ -177,11 +178,12 @@ resume without relying on chat history.
       `git diff --check`.
 - [x] Keep generated build/runtime artifacts out of the PR; release binaries
       in `server/firmware/` are intentional packaged deliverables.
-- [ ] Complete the requested deep final code review of all changed files; fix
-      findings and rerun affected tests. This is still outstanding.
-- [ ] Finish deep review and resolve PR #1's conflicts with the latest `main`.
-      Revalidate merged workflows, compose/deployment docs, firmware refresh,
-      server compatibility, and tests.
+- [x] Complete a deep review of the changed files; no significant issues
+      remained after correcting release metadata and integrating the current
+      `main` deployment changes.
+- [x] Resolve PR #1's conflicts through `origin/main` `6737325`; revalidate
+      workflows, deployment docs, firmware release artifacts, server
+      compatibility, and tests.
 - [ ] Push the conflict-resolution commit to the PR branch and verify GitHub
       reports it mergeable with required checks passing.
 - [ ] Merge PR #1 into `main` using GitHub's PR merge mechanism (not a direct
@@ -218,4 +220,4 @@ resume without relying on chat history.
 
 | Group | Branch | PR | Status |
 |---|---|---|---|
-| Consolidated mockups, server hardening, firmware refresh/CI | align-firmware-ui-with-mockups | [#1](https://github.com/CJ8664/folioframe/pull/1) | Open; conflicts with updated main; review and merge pending |
+| Consolidated mockups, server hardening, firmware refresh/CI | align-firmware-ui-with-mockups | [#1](https://github.com/CJ8664/folioframe/pull/1) | Open; local conflict resolution committed, push and GitHub checks pending |
