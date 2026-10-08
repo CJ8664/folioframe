@@ -54,12 +54,20 @@ class EinkLayout {
   void networkCard(const char* apName);
 
   // Labeled QR card: white card with 2px black border, green uppercase
-  // label, 248px QR, red URL below. Card is 470px tall.
+  // label, 248px QR (in qrColor), red URL below. Card is 470px tall.
   void qrCard(int x, int y, int w, const char* label, const char* heading,
-              const char* qrText, const char* url);
+              const char* qrText, const char* url, uint16_t qrColor);
 
-  // Draw a QR code (version 6, black on white) at (x,y) with target size.
-  void qr(const char* text, int x, int y, int targetSize);
+  // Draw a QR code (version 6) at (x,y) with target size.
+  // Modules in qrColor (default black), background white.
+  void qr(const char* text, int x, int y, int targetSize,
+          uint16_t qrColor);
+
+  // Simple picture-frame icon (outline rect + inner rect), 74px.
+  void frameIcon(int x, int y, int size, uint16_t color);
+
+  // Simple Wi-Fi icon (three arcs + dot), drawn in color.
+  void wifiIcon(int cx, int cy, int size, uint16_t color);
 
   // Small help QR + "Scan for help" caption, bottom-right.
   // 296px QR at (1200-76-296, 1600-64-296-40).

@@ -182,58 +182,73 @@ void Gdeb0709e01Panel::drawHelpQR() {
 
 bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
                                    const char* url) {
-  // Warm Clay layout per approved mockups (spectraframe-ux-setup-portal).
-  // Panel is 1200x1600 portrait. Uses EinkLayout helpers + EinkTheme inks.
+  // Matches the approved setup-portal mockup EXACTLY (except typeface).
+  // Header: frame icon + "FolioFrame Setup" + subtitle.
+  // Clay network card with Wi-Fi icon. 3 steps with exact mockup wording.
+  // Two QR cards: clay QR for setup, sage QR for GitHub. Footer.
   Serial.println("drawSetupQR: layout");
   folioframe::EinkLayout layout(&epaper);
   layout.clear();
 
-  // Topline + title
-  layout.topline("F O L I O F R A M E   S E T U P");
-  layout.textLeft(80, 130, "Connect to Wi-Fi", folioframe::theme::FONT_TITLE,
-                  3, folioframe::theme::INK_BLACK);
+  using folioframe::theme::FONT_BODY;
+  using folioframe::theme::FONT_SMALL;
+  using folioframe::theme::FONT_TITLE;
+  using folioframe::theme::INK_BLACK;
+  using folioframe::theme::INK_GREEN;
+  using folioframe::theme::INK_RED;
+  using folioframe::theme::INK_WHITE;
 
-  // Intro
-  layout.textLeft(84, 224, "Join the frame's Wi-Fi network, then",
-                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
-  layout.textLeft(84, 254, "scan the code to open setup.",
-                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
+  // Header: frame icon + title + subtitle (mockup positions)
+  layout.frameIcon(80, 105, 74, INK_BLACK);
+  layout.textLeft(175, 110, "FolioFrame Setup", FONT_TITLE, 3, INK_BLACK);
+  layout.textLeft(82, 205, "Connect your frame in three simple steps.",
+                  FONT_BODY, 1, INK_BLACK);
+  layout.rule(255);
 
-  // Rule + network card
-  layout.rule(300);
+  // Network card with Wi-Fi icon (icon drawn inside networkCard)
   layout.networkCard(apName);
 
-  // Numbered steps
-  int sy = 520;
+  // Step 1 (mockup wording)
+  int sy = 530;
   layout.stepCircle(111, sy, 1);
-  layout.textLeft(170, sy - 20, "Join the Wi-Fi network",
-                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
-  layout.textLeft(170, sy + 14, "Look for the name above in your Wi-Fi settings",
-                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
-  sy += 150;
+  layout.textLeft(170, sy - 30, "Join the frame's Wi-Fi", FONT_BODY, 1,
+                  INK_BLACK);
+  layout.textLeft(170, sy + 6, "Open Wi-Fi settings on your phone or computer",
+                  FONT_SMALL, 1, INK_BLACK);
+  layout.textLeft(170, sy + 28, "and select the network above.", FONT_SMALL, 1,
+                  INK_BLACK);
+  // Step 2
+  sy += 175;
   layout.stepCircle(111, sy, 2);
-  layout.textLeft(170, sy - 20, "Scan the setup QR",
-                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
-  layout.textLeft(170, sy + 14, "Point your camera at the code below",
-                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
-  sy += 150;
+  layout.textLeft(170, sy - 30, "Open the setup page", FONT_BODY, 1, INK_BLACK);
+  layout.textLeft(170, sy + 6, "Scan the setup QR below, or enter", FONT_SMALL,
+                  1, INK_BLACK);
+  layout.textLeft(170, sy + 28, "http://192.168.4.1 in your browser.",
+                  FONT_SMALL, 1, INK_RED);
+  // Step 3
+  sy += 175;
   layout.stepCircle(111, sy, 3);
-  layout.textLeft(170, sy - 20, "Enter Wi-Fi details",
-                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
-  layout.textLeft(170, sy + 14, "Choose your network and enter the password",
-                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
+  layout.textLeft(170, sy - 30, "Continue setup on your phone", FONT_BODY, 1,
+                  INK_BLACK);
+  layout.textLeft(170, sy + 6, "On the setup page, choose your home Wi-Fi",
+                  FONT_SMALL, 1, INK_BLACK);
+  layout.textLeft(170, sy + 28, "and enter its password to give the frame",
+                  FONT_SMALL, 1, INK_BLACK);
+  layout.textLeft(170, sy + 50, "internet access.", FONT_SMALL, 1, INK_BLACK);
 
-  // Two QR cards
-  const int cardY = 1000;
+  // QR cards with colored QRs (mockup: clay for setup, sage for GitHub)
+  const int cardY = 1020;
   const int cardW = 498;
-  layout.qrCard(82, cardY, cardW, "S E T U P", "Setup page", url, url);
-  layout.qrCard(82 + cardW + 40, cardY, cardW, "H E L P", "Help & docs",
-                "https://github.com/CJ8664/folioframe",
-                "github.com/CJ8664/folioframe");
+  layout.qrCard(82, cardY, cardW, "OPEN AFTER JOINING THE FRAME'S WI-FI ABOVE.",
+                "Setup page", url, "http://192.168.4.1", INK_RED);
+  layout.qrCard(82 + cardW + 40, cardY, cardW,
+                "READ MORE ABOUT FOLIOFRAME AND ITS SOURCE.",
+                "Project on GitHub", "https://github.com/CJ8664/folioframe",
+                "github.com/CJ8664/spectra-frame", INK_GREEN);
 
-  // Footnote
-  layout.textLeft(82, 1520, "Need help? Scan the Help QR above.",
-                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
+  // Footer (mockup wording, centered)
+  layout.textCenter(600, 1535, "Keep this screen visible until setup is complete.",
+                    FONT_SMALL, 1, INK_BLACK);
 
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();
