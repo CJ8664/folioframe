@@ -166,7 +166,8 @@ class SimPanel:
             self.fill_rect(sage_left, y, DISPLAY_W - sage_left, 1, PAPER)
 
     def wordmark(self):
-        self.text_center(600, 166, "F O L I O F R A M E", 28, CLAY)
+        # textCenter(600,166,"F O L I O F R A M E",FONT_SMALL,2) = 32px
+        self.text_center(600, 166, "F O L I O F R A M E", 32, CLAY)
 
     def status_icon(self, icon):
         """Draw status icon at (600, 485), r=105 (mirrors statusIcon)."""
@@ -254,44 +255,56 @@ class SimPanel:
         self.fill_rect(x + size - c, y + size - c, c, c, color)
 
     def _step_circle(self, cx, y, n):
-        """Numbered step circle (mirrors EinkLayout::stepCircle)."""
+        """Numbered step circle (mirrors EinkLayout::stepCircle).
+
+        Number: FONT_BODY x1 = 26px.
+        """
         self.fill_circle(cx, y, 29, PAPER)
         self.draw_circle(cx, y, 29, CLAY)
         self.draw_circle(cx, y, 28, CLAY)
-        self.text_center(cx, y, str(n), 28, CLAY)
+        self.text_center(cx, y, str(n), 26, CLAY)
 
     def _network_card(self, ap_name):
-        """Clay Wi-Fi network card (mirrors EinkLayout::networkCard)."""
+        """Clay Wi-Fi network card (mirrors EinkLayout::networkCard).
+
+        AP name: FONT_BODY x1 = 26px.
+        """
         self.fill_round_rect(82, 326, 1036, 132, 18, CLAY)
         for y in range(334, 450, 8):
             self.fill_rect(100, y, 1000, 2, PAPER)
         self.draw_round_rect(82, 326, 1036, 132, 18, PAPER)
         self._wifi_icon(170, 392, 56, PAPER)
-        self.text_center(640, 379, ap_name, 28, PAPER)
+        self.text_center(640, 379, ap_name, 26, PAPER)
 
     def _qr_card(self, x, y, w, label, heading, qr_text, url, qr_color):
-        """QR card with heading, label, QR, and URL (mirrors qrCard)."""
+        """QR card with heading, label, QR, and URL (mirrors qrCard).
+
+        Heading: FONT_BODY x1 = 26px. Label/URL: FONT_SMALL x1 = 16px.
+        """
         h = 470
         self.fill_rect(x, y, w, h, PAPER)
         self.draw_round_rect(x, y, w, h, 12, INK)
         cy = y + 24
         self.text_center(x + w // 2, cy, heading, 26, INK)
         cy += 38
-        self.text_center(x + w // 2, cy, label, 20, SAGE)
+        self.text_center(x + w // 2, cy, label, 16, SAGE)
         cy += 34
         qr_size = 248
         qr_x = x + (w - qr_size) // 2
         self._draw_qr(qr_text, qr_x, cy, qr_size, qr_color)
         cy += qr_size + 20
-        self.text_center(x + w // 2, cy, url, 20, CLAY)
+        self.text_center(x + w // 2, cy, url, 16, CLAY)
 
     def progress_bar(self, percent):
-        """Progress bar at (240, 1067), 720x30 (mirrors progressBar)."""
+        """Progress bar at (240, 1067), 720x30 (mirrors progressBar).
+
+        Labels: FONT_SMALL x2 = 32px.
+        """
         percent = min(percent, 100)
         x, label_y, y, w, h = 240, 1010, 1067, 720, 30
-        self.text_left(x, label_y, "Downloading", 24, INK)
+        self.text_left(x, label_y, "Downloading", 32, INK)
         label = f"{percent}%"
-        font = self._font(24)
+        font = self._font(32)
         bbox = self.draw.textbbox((0, 0), label, font=font)
         tw = bbox[2] - bbox[0]
         self.draw.text((x + w - tw, label_y), label, font=font, fill=INK)
@@ -300,8 +313,11 @@ class SimPanel:
         if inner > 0:
             self.fill_rect(x + 4, y + 4, inner, h - 8, CLAY)
 
-    def help_qr(self, target_size=185, right=52, bottom=42):
+    def help_qr(self, target_size=296, right=76, bottom=64):
         """Help QR in bottom-right corner (mirrors helpQR).
+
+        Firmware defaults (EinkLayout.h): (296, 76, 64).
+        Callers may override, e.g. drawDeviceStatus/drawPairing use (185,52,42).
 
         Firmware centers the QR modules within the target area:
         x + (target_size - qr_size) / 2, caption at y + qr_size + 16.
@@ -315,8 +331,9 @@ class SimPanel:
         # Center the QR grid within the target area (firmware does this)
         qx = x + (target_size - qr_size) // 2
         self._draw_qr(url, qx, y, target_size, INK)
+        # Caption: FONT_SMALL x1 = 16px
         self.text_center(x + target_size // 2, y + qr_size + 16,
-                         "Scan for help", 20, INK)
+                         "Scan for help", 16, INK)
 
     def _draw_qr(self, text, x, y, target_size, color):
         """Draw QR code (uses qrcode lib; falls back to text if too long).
@@ -358,56 +375,89 @@ class SimPanel:
 # --- Screen renderers (mirror StatusScreen methods) ---
 
 def render_device_status(icon, title, detail, footer=None, progress=None):
-    """Mirror Gdeb0709e01Panel::drawDeviceStatus."""
+    """Mirror Gdeb0709e01Panel::drawDeviceStatus exactly.
+
+    Font sizes: FONT_TITLE x3 = 78px, FONT_SMALL x2 = 32px, FONT_SMALL x1 = 16px.
+    """
     p = SimPanel()
     p.clear()
     p.status_backdrop()
     p.wordmark()
     p.status_icon(icon)
-    # Title at (600, 723), detail at (600, 904) — from drawDeviceStatus
-    p.wrap_center(600, 723, 24, 86, title, 48, INK)
-    p.wrap_center(600, 904, 48, 48, detail, 28, INK)
+    # Title at (600, 723) 78px, detail at (600, 904) 32px
+    p.wrap_center(600, 723, 24, 86, title, 78, INK)
+    p.wrap_center(600, 904, 48, 48, detail, 32, INK)
     if progress is not None:
         p.progress_bar(progress)
         if footer:
-            p.wrap_center(600, 1190, 48, 42, footer, 24, INK)
+            p.wrap_center(600, 1190, 48, 42, footer, 32, INK)
     elif footer:
-        p.wrap_center(600, 1084, 48, 42, footer, 24, INK)
-    p.help_qr()
+        p.wrap_center(600, 1084, 48, 42, footer, 32, INK)
+    p.help_qr(185, 52, 42)
     return p.img
 
 
-def render_status(title, lines, show_help_qr=True):
-    """Mirror Gdeb0709e01Panel::drawStatus (generic text screen)."""
+def render_status(title, lines, setup_header=False):
+    """Mirror Gdeb0709e01Panel::drawStatus exactly.
+
+    No backdrop, no wordmark — just clear(). Title left-aligned:
+    78px at (80,130), or 52px at (82,280) with setup header.
+    Body: 26px left-aligned at x=82, 70px spacing from titleY+100.
+    helpQR() with firmware defaults (296, 76, 64).
+    """
     p = SimPanel()
     p.clear()
-    p.status_backdrop()
-    p.wordmark()
-    p.wrap_center(600, 500, 24, 86, title, 48, INK)
-    y = 650
+
+    if setup_header:
+        # header() + rule(230), title 52px at (82, 280)
+        p.text_left(80, 130, "FolioFrame Setup", 78, INK)
+        p.fill_rect(82, 230, 1036, 2, INK)
+        title_y = 280
+        p.text_left(82, title_y, title, 52, INK)
+    else:
+        title_y = 130
+        p.text_left(80, title_y, title, 78, INK)
+
+    y = title_y + 100
     for line in lines:
-        if line:
-            p.wrap_center(600, y, 48, 48, line, 28, INK)
-        y += 48
-    if show_help_qr:
-        p.help_qr()
+        if not line:
+            y += 40
+            continue
+        p.text_left(82, y, line, 26, INK)
+        y += 70
+
+    p.help_qr()  # firmware defaults: (296, 76, 64)
     return p.img
 
 
-def render_pairing(claim_code, where="frame.chiragjain.info"):
-    """Mirror Gdeb0709e01Panel::drawPairing."""
+def render_pairing(claim_code="AB12-CD34", where="frame.chiragjain.info"):
+    """Mirror Gdeb0709e01Panel::drawPairing exactly.
+
+    Layout: statusBackdrop, frameIcon(80,130,74), "FolioFrame Setup" 78px
+    at (175,130), "Pair this frame" 78px at (190,300), three steps 32px
+    at x=190 y=460/660/760, claim-code box (190,875,820,155), code 78px
+    at (600,952), server URL 32px at (600,1055), helpQR(185,52,42).
+    """
     p = SimPanel()
     p.clear()
     p.status_backdrop()
-    p.wordmark()
-    p.wrap_center(600, 400, 24, 86, "Pair this frame", 48, INK)
-    # Claim code — large, centered
-    p.text_center(600, 600, claim_code, 96, CLAY)
-    p.wrap_center(600, 750, 48, 48,
-                  f"Enter this code at {where}/claim", 28, INK)
-    p.wrap_center(600, 850, 48, 48,
-                  "The code expires in 10 minutes.", 24, INK)
-    p.help_qr()
+    p._frame_icon(80, 130, 74, SAGE)
+    p.text_left(175, 130, "FolioFrame Setup", 78, INK)
+    p.text_left(190, 300, "Pair this frame", 78, INK)
+    p.text_left(190, 460, "1. Open your FolioFrame console in a browser",
+                32, INK)
+    p.text_left(190, 660, "2. Go to 'Pair a frame'", 32, INK)
+    p.text_left(190, 760, "3. Enter this code:", 32, INK)
+
+    # Claim-code box: white fill + red border
+    p.fill_round_rect(190, 875, 820, 155, 20, PAPER)
+    p.draw_round_rect(190, 875, 820, 155, 20, CLAY)
+    p.text_center(600, 952, claim_code or "------", 78, CLAY)
+
+    if where:
+        p.wrap_center(600, 1055, 40, 38, where, 32, CLAY)
+
+    p.help_qr(185, 52, 42)
     return p.img
 
 
@@ -421,37 +471,37 @@ def render_setup(ap_name="FF-Setup-ff-e4254d8fee68",
 
     # Header: frame icon + title + subtitle
     p._frame_icon(80, 130, 74, SAGE)
-    p.text_left(175, 130, "FolioFrame Setup", 54, INK)
-    p.text_left(82, 224, "Connect your frame in three simple steps.", 28, INK)
+    p.text_left(175, 130, "FolioFrame Setup", 78, INK)
+    p.text_left(82, 224, "Connect your frame in three simple steps.", 26, INK)
     p.fill_rect(82, 285, 1036, 2, INK)
 
     # Network card (clay, with Wi-Fi icon and AP name)
     p._network_card(ap_name)
 
-    # Step 1
+    # Step 1 (FONT_BODY x1 = 26px)
     sy = 560
     p._step_circle(111, sy, 1)
-    p.text_left(170, sy - 30, "Join the frame's Wi-Fi", 28, INK)
+    p.text_left(170, sy - 30, "Join the frame's Wi-Fi", 26, INK)
     p.text_left(170, sy + 6, "Open Wi-Fi settings on your phone or computer",
-                28, INK)
-    p.text_left(170, sy + 28, "and select the network above.", 28, INK)
+                26, INK)
+    p.text_left(170, sy + 28, "and select the network above.", 26, INK)
     # Step 2
     sy += 150
     p._step_circle(111, sy, 2)
-    p.text_left(170, sy - 30, "Open the setup page", 28, INK)
-    p.text_left(170, sy + 6, "Scan the setup QR below, or enter", 28, INK)
-    p.text_left(170, sy + 28, f"{setup_url} in your browser.", 28, CLAY)
+    p.text_left(170, sy - 30, "Open the setup page", 26, INK)
+    p.text_left(170, sy + 6, "Scan the setup QR below, or enter", 26, INK)
+    p.text_left(170, sy + 28, f"{setup_url} in your browser.", 26, CLAY)
     # Step 3
     sy += 150
     p._step_circle(111, sy, 3)
-    p.text_left(170, sy - 30, "Continue setup on your phone", 28, INK)
+    p.text_left(170, sy - 30, "Continue setup on your phone", 26, INK)
     p.text_left(170, sy + 6, "On the setup page, choose your home Wi-Fi",
-                28, INK)
+                26, INK)
     p.text_left(170, sy + 28, "and enter its password to give the frame",
-                28, INK)
-    p.text_left(170, sy + 50, "internet access.", 28, INK)
+                26, INK)
+    p.text_left(170, sy + 50, "internet access.", 26, INK)
 
-    # QR cards
+    # QR cards (heading 26px, label 16px, URL 16px)
     p._qr_card(82, 1000, 503,
                "OPEN AFTER JOINING THE FRAME'S WI-FI ABOVE.",
                "Setup page", setup_url, setup_url, CLAY)
@@ -460,9 +510,9 @@ def render_setup(ap_name="FF-Setup-ff-e4254d8fee68",
                "Project on GitHub", "https://github.com/CJ8664/folioframe",
                "github.com/CJ8664/folioframe", SAGE)
 
-    # Footer
+    # Footer (FONT_SMALL x1 = 16px)
     p.text_center(600, 1535, "Keep this screen visible until setup is complete.",
-                  20, INK)
+                  16, INK)
     return p.img
 
 
