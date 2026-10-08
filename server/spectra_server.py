@@ -998,14 +998,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                              "google_client_id": APP.auth.client_id})
             return
 
-        if p == "/api/firmware/refresh" and self.command == "POST":
-            # Public: pull latest firmware from GitHub Releases into the
-            # firmware volume. Anyone can trigger it; it only downloads
-            # from our own public repo.
-            result = APP.refresh_firmware_from_releases()
-            self._json(200, result)
-            return
-
         if p == "/login":
             # Kept for old bookmarks; sign-in now starts at the welcome page.
             self._redirect("/")
@@ -1318,6 +1310,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # ---- POST ---------------------------------------------------------
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
+
+        if p == "/api/firmware/refresh":
+            # Public: pull latest firmware from GitHub Releases into the
+            # firmware volume. Anyone can trigger it; it only downloads
+            # from our own public repo.
+            result = APP.refresh_firmware_from_releases()
+            self._json(200, result)
+            return
 
         if p == "/api/auth/token":
             data = self._read_json()
