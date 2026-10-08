@@ -16,4 +16,14 @@ std::string jsonString(const std::string& body, const std::string& key);
 // True when the body contains "ok":true (whitespace-tolerant).
 bool jsonOk(const std::string& body);
 
+// Boolean value of "key", or dflt if missing / not a JSON true|false.
+// Whitespace-tolerant; accepts only the literals true and false.
+bool jsonBool(const std::string& body, const std::string& key, bool dflt);
+
+// Boolean value of "key" nested inside the top-level object "outer"
+// (e.g. settings.auto_update), or dflt if the object/key is missing.
+// The inner object must be flat (no objects nested inside it).
+bool jsonNestedBool(const std::string& body, const std::string& outer,
+                    const std::string& key, bool dflt);
+
 }  // namespace spectra

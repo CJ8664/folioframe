@@ -288,3 +288,15 @@ class DeviceRegistry:
         dev.pop("override_etag", None)
         self._put(dev)
         return True
+
+    # ---- auto-update toggle (firmware OTA auto-install) -----------------
+    def set_auto_update(self, device_id, user_sub, enabled):
+        """Set per-device firmware auto-update. Unset = True (matches the
+        firmware NVS default, so existing behavior is unchanged). The device
+        picks this up from the heartbeat response (settings.auto_update)."""
+        dev = self._get(device_id)
+        if not dev or dev.get("owner") != user_sub:
+            return False
+        dev["auto_update"] = bool(enabled)
+        self._put(dev)
+        return True

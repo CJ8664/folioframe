@@ -1,8 +1,15 @@
-# SpectraFrame Device ↔ Server Protocol v2.2
+# SpectraFrame Device ↔ Server Protocol v2.3
 
 Replaces v1. The anonymous `GET /frame` is **removed** — every device endpoint
 requires authentication, and every human endpoint requires a signed-in session.
 There is no unauthenticated path to any frame, photo, or device control.
+
+v2.3 change: **per-device auto-update setting.** `PATCH /api/devices/{id}`
+accepts `{"auto_update": bool}`; `POST /v1/device/status` returns
+`{"ok": true, "settings": {"auto_update": bool}}` so the frame learns the
+console toggle at heartbeat time with zero extra round trips. Server is the
+source of truth; the on-device Portal checkbox is the offline fallback.
+(Supersedes v2.2.)
 
 v2.2 change: **shared service OAuth client.** The admin configures one
 Google OAuth client (once, in `SPECTRA_CONFIG_JSON`); every user just clicks
@@ -76,7 +83,7 @@ DEVICE                                        SERVER                    CONSOLE
 | `POST` | `/v1/device/register` | unauthenticated, rate-limited; starts claim flow |
 | `POST` | `/v1/device/claim` | `{device_id, claim_code}`; `pending` or `claimed`+token |
 | `GET` | `/v1/device/frame` | packed-4bpp frame **for this device**; `If-None-Match` → `304` |
-| `POST` | `/v1/device/status` | heartbeat `{fw, fw_build, battery_pct, rssi}` |
+| `POST` | `/v1/device/status` | heartbeat `{fw, fw_build, battery_pct, rssi}` → `{"ok": true, "settings": {"auto_update": bool}}` |
 | `POST` | `/v1/device/unpair` | device-initiated unpair (factory reset) |
 | `GET` | `/v1/device/ota/version` | `build=N` manifest (`md5=` line when a binary is published) |
 | `GET` | `/v1/device/ota/firmware.bin` | ESP32 app image (when published) |
@@ -143,7 +150,7 @@ wake. `503` with an empty queue is normal: keep image, sleep.
 | `GET` | `/api/account` | account: email, source, Photos state |
 | `GET` | `/api/devices` | my devices + status |
 | `POST` | `/api/devices/claim` | `{code}` → claims device to me |
-| `PATCH` | `/api/devices/{id}` | rename |
+| `PATCH` | `/api/devices/{id}` | rename (`{"name"}`) and/or auto-update toggle (`{"auto_update": bool}`) |
 | `DELETE` | `/api/devices/{id}` | unpair (revokes token) |
 | `POST` | `/api/devices/{id}/photos/upload` | multipart photo → **pinned override** (force push) |
 | `DELETE` | `/api/devices/{id}/photos/override` | clear override, resume assigned source |

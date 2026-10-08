@@ -270,6 +270,32 @@ class TestDeviceRegistry(unittest.TestCase):
         self.assertNotIn("rssi", dev)
         self.assertEqual(dev["fw"], "x" * 32)
 
+    def test_set_auto_update(self):
+        self._pair()
+        # default is unset (server treats as True)
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertNotIn("auto_update", dev)
+        # owner can toggle
+        self.assertTrue(self.reg.set_auto_update(
+            "ff-aabbccddeeff", "user-1", False))
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertEqual(dev["auto_update"], False)
+        self.assertTrue(self.reg.set_auto_update(
+            "ff-aabbccddeeff", "user-1", True))
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertEqual(dev["auto_update"], True)
+
+    def test_set_auto_update_rejects_non_owner(self):
+        self._pair()
+        self.assertFalse(self.reg.set_auto_update(
+            "ff-aabbccddeeff", "user-2", False))
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertNotIn("auto_update", dev)
+
+    def test_set_auto_update_rejects_unknown_device(self):
+        self.assertFalse(self.reg.set_auto_update(
+            "ff-000000000000", "user-1", False))
+
     def test_register_truncates_device_strings(self):
         self.reg.register("ff-001122334455", panel="<b>evil</b>" + "y" * 50,
                           fw="1.0.0<script>")
@@ -560,6 +586,53 @@ class TestHTTP(unittest.TestCase):
             pass
         s.close()
         return resp
+
+    def test_patch_auto_update_toggle(self):
+        cookie, csrf = self.login()
+        h = {"Content-Type": "application/json", "Cookie": cookie,
+             "X-CSRF-Token": csrf}
+        # pair a device
+        status, _, data = self.req(
+            "POST", "/v1/device/register",
+            body=json.dumps({"device_id": "ff-aaaa2222bbbb",
+                             "panel": "gdeb0709e01", "fw": "2.0.0"}),
+            headers={"Content-Type": "application/json"})
+        code = json.loads(data)["claim_code"]
+        status, _, data = self.req(
+            "POST", "/api/devices/claim",
+            body=json.dumps({"code": code}), headers=h)
+        self.assertEqual(status, 200)
+        # toggle OFF
+        status, _, data = self.req(
+            "PATCH", "/api/devices/ff-aaaa2222bbbb",
+            body=json.dumps({"auto_update": False}), headers=h)
+        self.assertEqual(status, 200, data[:200])
+        # GET /api/devices reflects it
+        status, _, data = self.req("GET", "/api/devices", headers=h)
+        devs = json.loads(data)["devices"]
+        dev = [d for d in devs if d["device_id"] == "ff-aaaa2222bbbb"][0]
+        self.assertEqual(dev["auto_update"], False)
+        # toggle back ON
+        status, _, data = self.req(
+            "PATCH", "/api/devices/ff-aaaa2222bbbb",
+            body=json.dumps({"auto_update": True}), headers=h)
+        self.assertEqual(status, 200)
+        # non-bool rejected
+        for bad in [None, "false", 0, 1, [True]]:
+            status, _, data = self.req(
+                "PATCH", "/api/devices/ff-aaaa2222bbbb",
+                body=json.dumps({"auto_update": bad}), headers=h)
+            self.assertEqual(status, 400, f"bad={bad!r}: {data[:200]}")
+        # non-dict body rejected
+        status, _, data = self.req(
+            "PATCH", "/api/devices/ff-aaaa2222bbbb",
+            body=json.dumps([1, 2]), headers=h)
+        self.assertEqual(status, 400)
+        # unknown device -> 404
+        status, _, _ = self.req(
+            "PATCH", "/api/devices/ff-000000000000",
+            body=json.dumps({"auto_update": False}), headers=h)
+        self.assertEqual(status, 404)
 
     def test_csrf_form_garbage_content_length(self):
         # A garbage Content-Length on the CSRF form fallback must not

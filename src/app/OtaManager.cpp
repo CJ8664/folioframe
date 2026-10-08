@@ -36,10 +36,13 @@ String baseUrl(const char* serverUrl) {
 
 bool OtaManager::batteryGatePassed() {
   // Battery gate: never flash on a low battery (brownout lesson).
-  // pct == 0 means no battery / invalid reading: USB-powered or unknown,
-  // which is safe to flash on.
-  uint8_t pct = board_->batteryPercent();
-  return pct == 0 || pct >= EE02_OTA_MIN_BATTERY_PCT;
+  // mv == 0 means no battery / invalid reading: USB-powered or unknown,
+  // which is safe to flash on. A valid-but-low reading must NOT flash:
+  // batteryPercent() returns 0 both for "unknown" AND for a genuinely
+  // dead battery (<=3400mV), so percent alone can't tell them apart.
+  uint16_t mv = board_->batteryMilliVolts();
+  if (mv == 0) return true;
+  return board_->batteryPercent() >= EE02_OTA_MIN_BATTERY_PCT;
 }
 
 bool OtaManager::getManifest(const char* serverUrl, const char* token,

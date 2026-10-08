@@ -121,5 +121,16 @@ bool DeviceClient::sendStatus(const char* token, uint32_t fwBuild) {
                    String(board_->batteryPercent()) + ",\"rssi\":" +
                    String(WiFi.RSSI()) + "}";
   int code = postJson("/v1/device/status", payload, token, body);
+  lastStatusBody_ = body;
   return code == 200;
+}
+
+bool DeviceClient::lastAutoUpdate(bool dflt) const {
+  if (lastStatusBody_.isEmpty()) return dflt;
+  std::string body(lastStatusBody_.c_str());
+  // Distinguish "server sent no setting" from "server sent false": only
+  // override when the key is actually present.
+  size_t p = body.find("\"auto_update\"");
+  if (p == std::string::npos) return dflt;
+  return spectra::jsonNestedBool(body, "settings", "auto_update", dflt);
 }

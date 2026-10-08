@@ -52,12 +52,17 @@ class DeviceClient {
 
   String lastError() const { return lastError_; }
   String fwVersion() const { return fwVersion_; }
+  // Auto-update setting from the last sendStatus response's settings object.
+  // Returns dflt when the server sent no setting (old server): the caller
+  // passes the local NVS value so it is preserved.
+  bool lastAutoUpdate(bool dflt) const;
 
  private:
   Board* board_;
   String serverUrl_;
   String fwVersion_;
   String lastError_;
+  String lastStatusBody_;  // raw body of the last sendStatus response
 
   // POST a JSON body; on 2xx fills bodyOut and returns the HTTP code.
   int postJson(const char* path, const String& jsonBody, const char* token,

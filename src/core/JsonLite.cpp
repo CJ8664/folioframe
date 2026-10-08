@@ -55,4 +55,33 @@ bool jsonOk(const std::string& body) {
           body[p + 4] == '\r');
 }
 
+namespace {
+
+// True when the char after a JSON literal ends the value.
+bool isValueEnd(const std::string& body, size_t p) {
+  return p >= body.size() || body[p] == ',' || body[p] == '}' ||
+         body[p] == ' ' || body[p] == '\t' || body[p] == '\n' ||
+         body[p] == '\r';
+}
+
+}  // namespace
+
+bool jsonBool(const std::string& body, const std::string& key, bool dflt) {
+  size_t p = valuePos(body, key);
+  if (p == std::string::npos) return dflt;
+  if (body.compare(p, 4, "true") == 0 && isValueEnd(body, p + 4)) return true;
+  if (body.compare(p, 5, "false") == 0 && isValueEnd(body, p + 5)) return false;
+  return dflt;  // present but not a boolean literal
+}
+
+bool jsonNestedBool(const std::string& body, const std::string& outer,
+                    const std::string& key, bool dflt) {
+  size_t p = valuePos(body, outer);
+  if (p == std::string::npos || body[p] != '{') return dflt;
+  // The settings object is flat, so the first '}' closes it.
+  size_t end = body.find('}', p);
+  if (end == std::string::npos) return dflt;
+  return jsonBool(body.substr(p, end - p), key, dflt);
+}
+
 }  // namespace spectra

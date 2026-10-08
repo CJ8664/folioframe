@@ -53,6 +53,10 @@ void EE02Board::begin() {
   attachInterruptArg(EE02_KEY3_PIN, keyIsr, (void*)(intptr_t)2, FALLING);
   pinMode(EE02_BAT_EN_PIN, OUTPUT);
   digitalWrite(EE02_BAT_EN_PIN, LOW);  // divider off except during reads
+  // Explicit 11dB attenuation: the divider tops out at ~614mV on the pin
+  // (4400mV / 7.16), well inside the 11dB ~3.3V full-scale range. Don't
+  // rely on the Arduino core default.
+  analogSetPinAttenuation(EE02_BAT_ADC_PIN, ADC_11db);
   if (EE02_STATUS_LED_PIN >= 0) {
     pinMode(EE02_STATUS_LED_PIN, OUTPUT);
     setLed(false);

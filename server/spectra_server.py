@@ -978,6 +978,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "battery_pct": d.get("battery_pct"),
                     "rssi": d.get("rssi"),
                     "override": bool(d.get("override_etag")),
+                    "auto_update": d.get("auto_update", True),
                 })
             self._json(200, {"ok": True, "devices": devs,
                              "latest_fw": APP.fw_version(),
@@ -1304,7 +1305,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             data = self._read_json() or {}
             APP.devices.heartbeat(dev["device_id"], data)
-            self._json(200, {"ok": True})
+            # Piggyback per-device settings on the heartbeat response: zero
+            # extra round trips for the frame. Old firmware ignores the body.
+            # Server is the source of truth; the on-device Portal checkbox is
+            # the offline fallback and gets overwritten on the next wake.
+            self._json(200, {"ok": True, "settings": {
+                "auto_update": dev.get("auto_update", True),
+            }})
             return
 
         if p == "/v1/device/unpair":
@@ -1519,7 +1526,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if data is None:
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
-            if APP.devices.rename(dev_id, sub, data.get("name", "")):
+            if not isinstance(data, dict):
+                self._json(400, {"ok": False, "error": "bad json"})
+                return
+            # Rename and/or auto-update toggle. Each is independent: a bad
+            # value in one never blocks the other.
+            ok = True
+            if "name" in data:
+                ok = APP.devices.rename(dev_id, sub, data.get("name", "")) and ok
+            if "auto_update" in data:
+                val = data.get("auto_update")
+                # Strict bool: truthiness coercion would silently flip the
+                # setting on null/"false"/0. Reject anything else.
+                if not isinstance(val, bool):
+                    self._json(400, {"ok": False,
+                                     "error": "auto_update must be true/false"})
+                    return
+                ok = APP.devices.set_auto_update(dev_id, sub, val) and ok
+            if ok:
                 self._json(200, {"ok": True})
             else:
                 self._json(404, {"ok": False})
@@ -2320,6 +2344,11 @@ async function renderDevices(){
         <button class='btn btn-ghost btn-sm' onclick='renameDev("${dev.device_id}")'>Rename</button>
         <button class='btn btn-ghost btn-sm' onclick='unpair("${dev.device_id}")'>Unpair</button>
       </div>
+      <label class='tgl'><input type='checkbox' ${dev.auto_update!==false?'checked':''}
+        onchange='setAutoUpdate("${dev.device_id}",this.checked)' aria-label='Auto-install firmware updates'>
+        <span>Auto-install firmware updates</span>
+      </label>
+      <span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About auto-update'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>When on, the frame installs new firmware silently at its next wake. When off, it only shows an "update available" notice — press KEY2 on the frame to install. The frame picks this up at its next check-in.</span></span>
     </div>`;
   }).join('')+`<p class='msg' id='dev-msg'></p>
     <div class='btnrow'><a class='btn btn-ghost btn-sm' href='/claim'>Pair another frame</a></div>`;
@@ -2351,6 +2380,11 @@ async function renameDev(id){
   if(n==null||!n.trim())return;
   const r=await api('PATCH','/api/devices/'+id,{name:n.trim()});
   devMsg(r.ok?'Renamed.':'Could not rename: '+(r.error||'unknown error'),!r.ok);
+  init();
+}
+async function setAutoUpdate(id,on){
+  const r=await api('PATCH','/api/devices/'+id,{auto_update:on});
+  devMsg(r.ok?(on?'Auto-update on — the frame picks this up at its next wake.':'Auto-update off — the frame will only show an update notice.'):'Could not change: '+(r.error||'unknown error'),!r.ok);
   init();
 }
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}

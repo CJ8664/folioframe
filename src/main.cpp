@@ -267,8 +267,13 @@ void setup() {
   // --- Battery (before any radio work) ---
   g_onUsb = board.usbPowered();
   if (!g_onUsb) {
+    uint16_t battMv = board.batteryMilliVolts();
     g_battPct = board.batteryPercent();
-    if (g_battPct > 0 && g_battPct < 15) {
+    // A valid reading at/below the curve floor (pct 0 but mv > 0) is a
+    // genuinely dead battery, not an unknown one: sleep instead of
+    // waking and fetching on 3.3V.
+    bool deadBattery = battMv > 0 && g_battPct == 0;
+    if (deadBattery || (g_battPct > 0 && g_battPct < 15)) {
       status.showCriticalBattery();
       panel.sleep();
       board.deepSleep((uint64_t)30 * 60 * 1000000ULL);  // retry in 30 min
@@ -404,6 +409,16 @@ void setup() {
   // Report telemetry first so the console shows this device's firmware
   // version even if the OTA or fetch below fails.
   deviceClient.sendStatus(token.c_str(), FW_BUILD);
+  // Server-wins auto-update: the web console toggle is the source of truth
+  // and overwrites the local NVS flag for this wake. Persist it so a later
+  // Portal visit shows the effective value.
+  bool serverAutoUpdate = deviceClient.lastAutoUpdate(s.otaAutoInstall);
+  if (serverAutoUpdate != s.otaAutoInstall) {
+    s.otaAutoInstall = serverAutoUpdate;
+    config.save();
+    Serial.printf("OTA: auto-install %s (from server)\n",
+                  s.otaAutoInstall ? "ON" : "OFF");
+  }
   if (g_otaCheckNow || g_otaPrompt) {
     // Button-driven: an install reboots; anything else falls through to
     // the normal fetch cycle.
