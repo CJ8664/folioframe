@@ -272,31 +272,4 @@ import * as esptooljs from './esptool-js-bundle.js';
       }
     });
   }
-  // --- Firmware refresh: pull latest from GitHub Releases ---
-  var refreshBtn = document.getElementById('fw-refresh-go');
-  var refreshStatus = document.getElementById('fw-refresh-status');
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', async function () {
-      refreshBtn.disabled = true;
-      refreshBtn.textContent = 'Checking...';
-      if (refreshStatus) refreshStatus.textContent = '';
-      try {
-        var resp = await fetch('/api/firmware/refresh', { method: 'POST' });
-        var data = await resp.json();
-        if (refreshStatus) refreshStatus.textContent = data.message || '';
-        log('Firmware refresh: ' + (data.message || JSON.stringify(data)));
-        if (data.updated) {
-          // Reload the version picker to show the new firmware
-          setTimeout(function () { location.reload(); }, 1500);
-        }
-      } catch (e) {
-        var msg = 'Refresh failed: ' + (e.message || e);
-        if (refreshStatus) refreshStatus.textContent = msg;
-        log(msg);
-      } finally {
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = 'Check for firmware updates';
-      }
-    });
-  }
 })();

@@ -85,6 +85,44 @@ bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
   return true;
 }
 
+bool Gdeb0709e01Panel::drawDeviceStatus(PanelStatusIcon icon,
+                                        const char* title,
+                                        const char* detail,
+                                        const char* footer,
+                                        uint8_t progress,
+                                        bool showProgress) {
+  Serial.println("drawDeviceStatus: layout");
+  folioframe::EinkLayout layout(&epaper);
+  layout.clear();
+  layout.statusBackdrop();
+  layout.wordmark();
+  layout.statusIcon(icon);
+  layout.wrapCenter(600, 723, 24, 86, title, folioframe::theme::FONT_TITLE, 3,
+                    folioframe::theme::INK_BLACK);
+  layout.wrapCenter(600, 904, 48, 48, detail, folioframe::theme::FONT_SMALL, 2,
+                    folioframe::theme::INK_BLACK);
+
+  if (showProgress) {
+    layout.progressBar(progress);
+    if (footer) {
+      layout.wrapCenter(600, 1190, 48, 42, footer,
+                        folioframe::theme::FONT_SMALL, 2,
+                        folioframe::theme::INK_BLACK);
+    }
+  } else if (footer) {
+    layout.wrapCenter(600, 1084, 48, 42, footer,
+                      folioframe::theme::FONT_SMALL, 2,
+                      folioframe::theme::INK_BLACK);
+  }
+  layout.helpQR(185, 52, 42);
+
+  uint32_t t0 = millis();
+  epaper.update();
+  uint32_t dt = millis() - t0;
+  Serial.printf("drawDeviceStatus: update completed in %lums\n", dt);
+  return true;
+}
+
 bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
                                   int numLines, bool setupHeader) {
   // Warm Clay layout per approved mockups. "FolioFrame Setup" header only
@@ -182,13 +220,12 @@ void Gdeb0709e01Panel::drawHelpQR() {
 
 bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
                                    const char* url) {
-  // Matches the approved setup-portal mockup EXACTLY (except typeface).
-  // Header: frame icon + "FolioFrame Setup" + subtitle.
-  // Clay network card with Wi-Fi icon. 3 steps with exact mockup wording.
-  // Two QR cards: clay QR for setup, sage QR for GitHub. Footer.
+  // Follow the setup-portal mockup's native 1200x1600 geometry and copy.
+  // Opaque Spectra 6 inks approximate the mockup's translucent surfaces.
   Serial.println("drawSetupQR: layout");
   folioframe::EinkLayout layout(&epaper);
   layout.clear();
+  layout.setupBackdrop();
 
   using folioframe::theme::FONT_BODY;
   using folioframe::theme::FONT_SMALL;
@@ -198,53 +235,59 @@ bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
   using folioframe::theme::INK_RED;
   using folioframe::theme::INK_WHITE;
 
+  const char* setupUrl = (url && url[0]) ? url : "http://192.168.4.1";
+  char setupUrlInstruction[160];
+  snprintf(setupUrlInstruction, sizeof(setupUrlInstruction),
+           "%s in your browser.", setupUrl);
+
   // Header: frame icon + title + subtitle (mockup positions)
-  layout.frameIcon(80, 105, 74, INK_BLACK);
-  layout.textLeft(175, 110, "FolioFrame Setup", FONT_TITLE, 3, INK_BLACK);
-  layout.textLeft(82, 205, "Connect your frame in three simple steps.",
+  layout.frameIcon(80, 130, 74, INK_GREEN);
+  layout.textLeft(175, 130,
+                  (title && title[0]) ? title : "FolioFrame Setup",
+                  FONT_TITLE, 3, INK_BLACK);
+  layout.textLeft(82, 224, "Connect your frame in three simple steps.",
                   FONT_BODY, 1, INK_BLACK);
-  layout.rule(255);
+  layout.rule(285);
 
   // Network card with Wi-Fi icon (icon drawn inside networkCard)
   layout.networkCard(apName);
 
   // Step 1 (mockup wording)
-  int sy = 530;
+  int sy = 560;
   layout.stepCircle(111, sy, 1);
   layout.textLeft(170, sy - 30, "Join the frame's Wi-Fi", FONT_BODY, 1,
                   INK_BLACK);
   layout.textLeft(170, sy + 6, "Open Wi-Fi settings on your phone or computer",
-                  FONT_SMALL, 1, INK_BLACK);
-  layout.textLeft(170, sy + 28, "and select the network above.", FONT_SMALL, 1,
+                  FONT_BODY, 1, INK_BLACK);
+  layout.textLeft(170, sy + 28, "and select the network above.", FONT_BODY, 1,
                   INK_BLACK);
   // Step 2
-  sy += 175;
+  sy += 150;
   layout.stepCircle(111, sy, 2);
   layout.textLeft(170, sy - 30, "Open the setup page", FONT_BODY, 1, INK_BLACK);
-  layout.textLeft(170, sy + 6, "Scan the setup QR below, or enter", FONT_SMALL,
+  layout.textLeft(170, sy + 6, "Scan the setup QR below, or enter", FONT_BODY,
                   1, INK_BLACK);
-  layout.textLeft(170, sy + 28, "http://192.168.4.1 in your browser.",
-                  FONT_SMALL, 1, INK_RED);
+  layout.textLeft(170, sy + 28, setupUrlInstruction, FONT_BODY, 1, INK_RED);
   // Step 3
-  sy += 175;
+  sy += 150;
   layout.stepCircle(111, sy, 3);
   layout.textLeft(170, sy - 30, "Continue setup on your phone", FONT_BODY, 1,
                   INK_BLACK);
   layout.textLeft(170, sy + 6, "On the setup page, choose your home Wi-Fi",
-                  FONT_SMALL, 1, INK_BLACK);
+                  FONT_BODY, 1, INK_BLACK);
   layout.textLeft(170, sy + 28, "and enter its password to give the frame",
-                  FONT_SMALL, 1, INK_BLACK);
-  layout.textLeft(170, sy + 50, "internet access.", FONT_SMALL, 1, INK_BLACK);
+                  FONT_BODY, 1, INK_BLACK);
+  layout.textLeft(170, sy + 50, "internet access.", FONT_BODY, 1, INK_BLACK);
 
   // QR cards with colored QRs (mockup: clay for setup, sage for GitHub)
-  const int cardY = 1020;
-  const int cardW = 498;
+  const int cardY = 1000;
+  const int cardW = 503;
   layout.qrCard(82, cardY, cardW, "OPEN AFTER JOINING THE FRAME'S WI-FI ABOVE.",
-                "Setup page", url, "http://192.168.4.1", INK_RED);
-  layout.qrCard(82 + cardW + 40, cardY, cardW,
+                "Setup page", setupUrl, setupUrl, INK_RED);
+  layout.qrCard(82 + cardW + 30, cardY, cardW,
                 "READ MORE ABOUT FOLIOFRAME AND ITS SOURCE.",
                 "Project on GitHub", "https://github.com/CJ8664/folioframe",
-                "github.com/CJ8664/spectra-frame", INK_GREEN);
+                "github.com/CJ8664/folioframe", INK_GREEN);
 
   // Footer (mockup wording, centered)
   layout.textCenter(600, 1535, "Keep this screen visible until setup is complete.",
@@ -271,27 +314,31 @@ bool Gdeb0709e01Panel::drawPairing(const char* claimCode, const char* where) {
   using folioframe::theme::INK_BLACK;
   using folioframe::theme::INK_RED;
 
-  // Header + title (both 75px-equivalent: font4 x3 = 78px)
-  layout.header();
-  layout.textCenter(600, 300, "Pair this frame", FONT_TITLE, 3, INK_BLACK);
+  layout.statusBackdrop();
+  layout.frameIcon(80, 130, 74, folioframe::theme::INK_GREEN);
+  layout.textLeft(175, 130, "FolioFrame Setup", FONT_TITLE, 3, INK_BLACK);
+  layout.textLeft(190, 300, "Pair this frame", FONT_TITLE, 3, INK_BLACK);
+  layout.textLeft(190, 460, "1. Open your FolioFrame console in a browser",
+                  folioframe::theme::FONT_SMALL, 2, INK_BLACK);
+  layout.textLeft(190, 660, "2. Go to 'Pair a frame'",
+                  folioframe::theme::FONT_SMALL, 2, INK_BLACK);
+  layout.textLeft(190, 760, "3. Enter this code:",
+                  folioframe::theme::FONT_SMALL, 2, INK_BLACK);
 
-  // Steps (48px-equivalent: font4 x2 = 52px), left-aligned at x=190
-  layout.textLeft(190, 460, "1. Open your FolioFrame console", FONT_BODY, 2,
-                  INK_BLACK);
-  layout.textLeft(190, 520, "   in a browser", FONT_BODY, 2, INK_BLACK);
-  layout.textLeft(190, 660, "2. Go to 'Pair a frame'", FONT_BODY, 2, INK_BLACK);
-  layout.textLeft(190, 760, "3. Enter this code:", FONT_BODY, 2, INK_BLACK);
-
-  // Claim code (48px, centered, red for emphasis)
-  layout.textCenter(600, 860, claimCode ? claimCode : "------", FONT_BODY, 2,
+  epaper.fillRoundRect(190, 875, 820, 155, 20,
+                       folioframe::theme::INK_WHITE);
+  epaper.drawRoundRect(190, 875, 820, 155, 20, folioframe::theme::INK_RED);
+  layout.textCenter(600, 952, claimCode ? claimCode : "------", FONT_BODY, 3,
                     INK_RED);
 
-  // Server URL (48px, centered, red/rust)
+  // The mockup's explanatory hint is hidden by default; keep the server URL
+  // clear of the code and help QR instead of rendering that hint as body copy.
   if (where && where[0] != '\0') {
-    layout.textCenter(600, 1020, where, FONT_BODY, 2, INK_RED);
+    layout.wrapCenter(600, 1055, 40, 38, where,
+                      folioframe::theme::FONT_SMALL, 2, INK_RED);
   }
 
-  layout.helpQR();
+  layout.helpQR(185, 52, 42);
 
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();

@@ -10,8 +10,9 @@
 #   boot_app0.bin   @ 0xe000   <- Arduino-ESP32 package
 #   firmware.bin    @ 0x10000  <- .pio/build/<env>/firmware.bin (also the OTA image)
 #
-# Then: bump "build"/"fw_version" in the server config, commit, push,
-# redeploy via Portainer (without image repull).
+# The firmware GitHub Actions workflow packages these files and publishes the
+# firmware images plus VERSION/BUILD to the matching folioframe-vX.Y.Z release.
+# This script can also be run locally to refresh server/firmware/ for testing.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -64,4 +65,4 @@ magic=$(od -A n -t x1 -N 1 "$OUT_DIR/firmware.bin" | tr -d ' \n')
 if [ "$magic" != "e9" ]; then
   echo "warning: firmware.bin magic is 0x$magic, expected 0xe9" >&2
 fi
-echo "done -- bump build/fw_version in server config, commit, push, redeploy."
+echo "done -- firmware release workflow publishes firmware.bin, VERSION, and BUILD."

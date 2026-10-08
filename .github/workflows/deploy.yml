@@ -1,20 +1,21 @@
 name: Deploy
 
-# Builds the server Docker image and deploys to production on merge to main.
-# Triggered only by server/container changes — firmware-only changes skip this.
-# Firmware is delivered via GitHub Releases + the server's runtime refresh,
-# not baked into the image.
-
+# Firmware is delivered through GitHub Releases; only server/container changes
+# publish and deploy a new server image.
 on:
   push:
     branches: [main]
     paths:
-      - 'server/**/*.py'
-      - 'server/static/**'
-      - 'Dockerfile'
-      - 'docker-compose.yml'
-      - '.github/workflows/deploy.yml'
-      - '!server/firmware/**'
+      - "server/**/*.py"
+      - "server/static/**"
+      - "server/requirements.txt"
+      - "server/requirements-firebase.txt"
+      - "server/tests/run.sh"
+      - "server/config.json.example"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy.yml"
+      - "!server/firmware/**"
   workflow_dispatch:
 
 concurrency:
@@ -22,14 +23,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server dependencies
+        run: python -m pip install -r server/requirements-firebase.txt
+
+      - name: Run server tests
+        run: bash server/tests/run.sh
+
   docker:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
       image: ${{ steps.meta.outputs.tags }}
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
@@ -53,7 +72,7 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Build and push
+      - name: Build and push server image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -74,34 +93,44 @@ jobs:
           PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
           PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
           CF_BYPASS_HEADER: ${{ secrets.CF_BYPASS_HEADER }}
+        shell: bash
         run: |
-          # Git-managed stack: use the git redeploy endpoint (pulls compose
-          # from the repo, then pullImage pulls the fresh Docker Hub image).
-          # x-ci-bypass header lets this through Cloudflare Bot Fight Mode
-          # via a WAF custom rule (re-enable Bot Fight Mode safely).
-          # Capture HTTP status so failures show Portainer's actual message.
-          HTTP_STATUS=$(curl -s -o /tmp/portainer-redeploy.json -w "%{http_code}" -X PUT \
-            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID" \
-            -H "X-API-Key: $PORTAINER_API_KEY" \
-            -H "x-ci-bypass: $CF_BYPASS_HEADER" \
-            -H "Content-Type: application/json" \
-            -d '{"pullImage": true, "repositoryReferenceName": "refs/heads/main"}')
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::error::Portainer redeploy failed (HTTP $HTTP_STATUS)"
-            cat /tmp/portainer-redeploy.json
+          set -euo pipefail
+          test -n "$PORTAINER_URL"
+          test -n "$PORTAINER_API_KEY"
+          test -n "$CF_BYPASS_HEADER"
+          [[ "$PORTAINER_ENDPOINT_ID" =~ ^[0-9]+$ ]]
+          [[ "$PORTAINER_STACK_ID" =~ ^[0-9]+$ ]]
+          # Git-managed stack: refresh the compose definition and pull image.
+          # The WAF bypass header allows this request through Bot Fight Mode.
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error --max-time 60 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --request PUT \
+            --header "X-API-Key: $PORTAINER_API_KEY" \
+            --header "x-ci-bypass: $CF_BYPASS_HEADER" \
+            --header "Content-Type: application/json" \
+            --data '{"pullImage":true,"repositoryReferenceName":"refs/heads/main"}' \
+            "${PORTAINER_URL%/}/api/stacks/$PORTAINER_STACK_ID/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID")"
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Portainer redeploy failed (HTTP $status)"
             exit 1
           fi
           echo "Portainer redeploy triggered"
 
-      - name: Wait for health
+      - name: Verify deployed service health
+        shell: bash
         run: |
-          for i in $(seq 1 30); do
-            if curl -fsS https://frame.chiragjain.info/api/config >/dev/null 2>&1; then
-              echo "Server healthy"
+          set -euo pipefail
+          health_url="https://frame.chiragjain.info/healthz"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 "$health_url"; then
+              echo "Server health check passed."
               exit 0
             fi
-            echo "Waiting for server... ($i/30)"
-            sleep 10
+            echo "Health check $attempt/30 failed; retrying in 5 seconds."
+            sleep 5
           done
-          echo "Server did not become healthy in time" >&2
+          echo "Server did not become healthy within five minutes." >&2
           exit 1

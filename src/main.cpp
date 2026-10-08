@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.11"
-#define FW_BUILD 29
+#define FW_VERSION "0.0.12"
+#define FW_BUILD 30
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -84,11 +84,14 @@ static void otaLabelForPending(char* out, size_t n) {
     snprintf(out, n, "build %u", s.otaPendingBuild);
 }
 
-// A full e-paper refresh (~30 s) is far slower than the download, so the
-// on-screen bar moves in coarse steps; serial gets every percent.
+// A full e-paper refresh (~30 s) is expensive, so the on-screen bar moves in
+// coarse steps; serial still gets every percent.
 static void otaProgressCb(uint8_t pct) {
   Serial.printf("OTA: %u%%\n", pct);
-  if (s_lastOtaPct == 255 || pct >= s_lastOtaPct + 25 || pct >= 100) {
+  if (pct >= 100) {
+    s_lastOtaPct = 100;
+    status.showOtaVerifying();
+  } else if (pct >= s_lastOtaPct + 50) {
     s_lastOtaPct = pct;
     status.showOtaProgress(pct);
   }
@@ -114,11 +117,12 @@ static bool waitForOtaConfirm() {
   return false;  // timeout = skip, continue the normal cycle
 }
 
-// "Couldn't reach the update server." vs a quieter message when the server
-// simply publishes no update channel (HTTP 404 -> empty lastError).
-static const char* otaCheckError() {
-  return ota.lastError().length() ? ota.lastError().c_str()
-                                  : "Couldn't check for updates.";
+static void showOtaManifestFailure() {
+  if (ota.lastError().length()) {
+    status.showOtaFailed(ota.lastError().c_str());
+  } else {
+    status.showOtaNoChannel();
+  }
 }
 
 // Download + verify + flash, then reboot. NVS (Wi-Fi, server URL, device
@@ -129,7 +133,7 @@ static void installOtaUpdate(const char* otaServer, const char* otaToken,
   spectra::OtaManifest m;
   if (!manifest) {
     if (!ota.getManifest(otaServer, otaToken, m)) {
-      status.showOtaFailed(otaCheckError());
+      showOtaManifestFailure();
       return;
     }
     if (!spectra::shouldUpdate(FW_BUILD, m)) {
@@ -142,12 +146,9 @@ static void installOtaUpdate(const char* otaServer, const char* otaToken,
     status.showOtaBatteryLow();
     return;
   }
-  s_lastOtaPct = 255;
+  s_lastOtaPct = 0;
   status.showOtaProgress(0);
   if (ota.installFromManifest(otaServer, otaToken, *manifest, otaProgressCb)) {
-    // MD5 was verified inside the flash; show the state briefly before
-    // the reboot screen so the flow reads complete on-panel.
-    status.showOtaVerifying();
     config.get().otaUpdatePending = false;  // installed: nothing staged
     config.save();
     status.showOtaDone();  // blocks for the e-paper refresh
@@ -186,7 +187,7 @@ static void runOtaInteractive(const char* otaServer, const char* otaToken,
   }
   spectra::OtaManifest manifest;
   if (!ota.getManifest(otaServer, otaToken, manifest)) {
-    status.showOtaFailed(otaCheckError());
+    showOtaManifestFailure();
     return;
   }
   if (!spectra::shouldUpdate(FW_BUILD, manifest)) {

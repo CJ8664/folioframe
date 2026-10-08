@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -381,6 +382,27 @@ class TestHTTP(unittest.TestCase):
     def login(self):
         return self.login_as()
 
+    def test_firmware_refresh_is_public_and_rate_limited(self):
+        with patch.object(
+                spectra_server.APP, "refresh_firmware_from_releases",
+                return_value={
+                    "ok": True,
+                    "status": "up_to_date",
+                    "updated": False,
+                    "version": "0.0.11",
+                    "build": "29",
+                }) as refresh:
+            for _ in range(spectra_server.APP.ratelimit.limit):
+                status, _, data = self.req("POST", "/api/firmware/refresh")
+                self.assertEqual(status, 200, data[:200])
+                self.assertEqual(json.loads(data)["status"], "up_to_date")
+
+            status, _, data = self.req("POST", "/api/firmware/refresh")
+
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(data)["ok"], False)
+        self.assertEqual(refresh.call_count, spectra_server.APP.ratelimit.limit)
+
     def test_welcome_is_public_console_is_gated(self):
         # The welcome page is the only public page.
         status, _, data = self.req("GET", "/")
@@ -670,6 +692,10 @@ class TestHTTP(unittest.TestCase):
             status, _, data = self.req("GET", "/flash")
             self.assertEqual(status, 200)
             self.assertIn(b"No firmware published", data)
+            self.assertIn(b"id='firmware-refresh'", data)
+            self.assertEqual(data.count(b"id='firmware-refresh'"), 1)
+            self.assertNotIn(b"id='fw-refresh-go'", data)
+            self.assertIn(b"Check for firmware updates", data)
             self.assertNotIn(b"<esp-web-install-button", data)
             # manifest + binaries 404 cleanly
             for path in ("/flash/manifest.json", "/flash/firmware.bin",
@@ -698,6 +724,9 @@ class TestHTTP(unittest.TestCase):
             self.assertIn(b"flash-split", data)
             self.assertIn(b"id='fwver'", data)
             self.assertIn(b"id='flash-go'", data)
+            self.assertIn(b"id='firmware-refresh'", data)
+            self.assertEqual(data.count(b"id='firmware-refresh'"), 1)
+            self.assertNotIn(b"id='fw-refresh-go'", data)
             self.assertIn(b"id='console-wrap'", data)
             self.assertIn(b"ewt-install-dialog", data)
             self.assertNotIn(b"<esp-web-install-button", data)

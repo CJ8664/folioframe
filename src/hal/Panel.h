@@ -12,6 +12,19 @@ struct PanelDims {
   uint16_t height;
 };
 
+enum class PanelStatusIcon : uint8_t {
+  Checking,
+  Download,
+  Verifying,
+  Success,
+  Failure,
+  Battery,
+  CriticalBattery,
+  WifiLost,
+  WifiWeak,
+  PhotoError,
+};
+
 // Spectra 6 hardware nibble codes (UC8179 family).
 enum class Spectra6 : uint8_t {
   White = 0x0,
@@ -30,6 +43,19 @@ class Panel {
   virtual PanelDims dims() const = 0;
   virtual bool begin() = 0;  // init controller; false on failure
   virtual bool supportsPartial() const = 0;
+
+  // Mockup-aligned OTA and alert state. Panels without a dedicated renderer
+  // retain a useful text-only fallback through drawStatus().
+  virtual bool drawDeviceStatus(PanelStatusIcon icon, const char* title,
+                                const char* detail, const char* footer = nullptr,
+                                uint8_t progress = 0,
+                                bool showProgress = false) {
+    (void)icon;
+    (void)progress;
+    (void)showProgress;
+    const char* lines[] = {detail ? detail : "", footer ? footer : ""};
+    return drawStatus(title, lines, footer ? 2 : 1, false);
+  }
 
   // Draw a packed-4bpp framebuffer: 2 px/byte, high nibble first,
   // rows top→bottom, left→right. buf must hold width*height/2 bytes.

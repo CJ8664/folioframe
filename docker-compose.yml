@@ -5,7 +5,10 @@
 #      environment variable SPECTRA_CONFIG_JSON with your full config JSON
 #      (same keys as server/config.json.example). No files needed.
 #   B. Shell (SSH): SPECTRA_CONFIG_JSON="$(cat server/config.json)" \
-#         docker compose up -d --build
+#         docker compose up -d
+#
+# This production stack pulls the public Docker Hub image. For local source
+# builds, combine it with docker-compose.dev.yml.
 #
 # The container needs no config file mounted: on first boot the server
 # writes a default config, then SPECTRA_CONFIG_JSON overrides it.
@@ -24,6 +27,9 @@ services:
       - "8765:8765"
     environment:
       PORT: "8765"
+      # Set this to the exact reverse-proxy peer IPs when per-client
+      # rate limits need to honor X-Forwarded-For.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-127.0.0.1,::1}
       # Config comes from the SPECTRA_CONFIG_JSON env var (set in Portainer's
       # stack environment variables). ${...} substitution is how Portainer
       # passes UI env vars into containers for git-based stacks.
@@ -36,16 +42,13 @@ services:
       # (empty = anyone may sign in; accounts are isolated per user).
     volumes:
       - spectra-data:/app/server/data
-      # Firmware binaries live here so new releases can be published
-      # without rebuilding the container: copy the packaged files
-      # (tools/package_firmware.sh output) into the volume and they
-      # go live immediately (no restart needed). On first deploy Docker
-      # copies the image's baked-in firmware into the fresh volume.
+      # GitHub Release refreshes update this persistent volume at runtime.
+      # Older versioned firmware and the USB-flashing boot assets are retained.
       - firmware:/app/server/firmware
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c",
-             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/config', timeout=5)"]
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=5)"]
       interval: 60s
       timeout: 10s
       retries: 3

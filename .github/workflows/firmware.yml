@@ -1,19 +1,21 @@
 name: Firmware
 
-# Builds ESP32-S3 firmware and publishes to GitHub Releases on merge to main.
-# Triggered only by firmware source changes — server-only changes skip this.
-
+# Build EE02 firmware and publish stable releases independently of server
+# image builds and deployments.
 on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'include/**'
-      - 'platformio.ini'
-      - 'lib/**'
-      - 'tools/package_firmware.sh'
-      - '.github/workflows/firmware.yml'
+      - "src/**"
+      - "include/**"
+      - "lib/**"
+      - "platformio.ini"
+      - "tools/package_firmware.sh"
+      - ".github/workflows/firmware.yml"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
   group: firmware-main
@@ -23,15 +25,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # needed to create releases
+      contents: write
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Cache PlatformIO
         uses: actions/cache@v4
@@ -39,13 +41,14 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
+            ~/.platformio/platforms
             ~/.platformio/packages
           key: ${{ runner.os }}-pio-6.2.0-${{ hashFiles('platformio.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-6.2.0-
 
       - name: Install PlatformIO
-        run: pip install "platformio==6.2.0"
+        run: python -m pip install platformio==6.2.0
 
       - name: Build firmware
         run: pio run -e ee02
@@ -53,14 +56,18 @@ jobs:
       - name: Package firmware
         run: tools/package_firmware.sh ee02
 
-      - name: Read version
+      - name: Read release metadata
         id: version
+        shell: bash
         run: |
-          FW_VERSION=$(cat server/firmware/VERSION | tr -d '[:space:]')
-          FW_BUILD=$(cat server/firmware/BUILD | tr -d '[:space:]')
-          echo "version=$FW_VERSION" >> $GITHUB_OUTPUT
-          echo "build=$FW_BUILD" >> $GITHUB_OUTPUT
-          echo "tag=folioframe-v$FW_VERSION" >> $GITHUB_OUTPUT
+          version="$(tr -d '\r\n' < server/firmware/VERSION)"
+          build="$(tr -d '\r\n' < server/firmware/BUILD)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$build" =~ ^[1-9][0-9]{0,9}$ ]]
+          (( build <= 4294967295 ))
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'build=%s\n' "$build" >> "$GITHUB_OUTPUT"
+          printf 'tag=folioframe-v%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -72,9 +79,11 @@ jobs:
             Commit: ${{ github.sha }}
           draft: false
           prerelease: false
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          make_latest: true
           files: |
             server/firmware/firmware.bin
             server/firmware/firmware-${{ steps.version.outputs.version }}.bin
             server/firmware/VERSION
             server/firmware/BUILD
-          fail_on_unmatched_files: true
