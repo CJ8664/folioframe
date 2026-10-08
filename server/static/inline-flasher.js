@@ -192,4 +192,84 @@ import * as esptooljs from './esptool-js-bundle.js';
       log('Selected firmware v' + verSel.value + ' (applies to next flash)');
     });
   }
+
+  // --- Serial monitor: live logs at 115200 baud, no flashing ---
+  var serialBtn = document.getElementById('serial-go');
+  var serialPort = null;
+  var serialReading = false;
+
+  function setSerialBtn(running) {
+    if (!serialBtn) return;
+    serialBtn.disabled = false;
+    serialBtn.textContent = running ? 'Stop logs' : 'View serial logs';
+  }
+
+  async function stopSerial() {
+    serialReading = false;
+    if (serialPort) {
+      try { await serialPort.close(); } catch (e) { /* ignore */ }
+      serialPort = null;
+    }
+    setSerialBtn(false);
+    setStatus('Serial monitor stopped.', 'muted');
+  }
+
+  if (serialBtn) {
+    serialBtn.addEventListener('click', async function () {
+      if (serialReading) { await stopSerial(); return; }
+      if (!('serial' in navigator)) {
+        setStatus('Web Serial is not available. Use Chrome, Edge, or Opera on a computer (HTTPS required).', 'err');
+        return;
+      }
+      var port = null;
+      try {
+        port = await navigator.serial.requestPort();
+      } catch (e) {
+        return; // user cancelled
+      }
+      try {
+        await port.open({ baudRate: 115200 });
+      } catch (e) {
+        setStatus('Could not open port: ' + (e.message || e), 'err');
+        return;
+      }
+      serialPort = port;
+      serialReading = true;
+      setSerialBtn(true);
+      if (logEl) logEl.innerHTML = '';
+      setStatus('Serial monitor running at 115200 baud — reset the frame to see boot logs.', 'ok');
+      log('--- serial monitor started (115200 baud) ---');
+
+      var decoder = new TextDecoder();
+      var buf = '';
+      try {
+        while (serialReading && port.readable) {
+          var reader = port.readable.getReader();
+          try {
+            while (true) {
+              var result = await reader.read();
+              if (result.done) break;
+              buf += decoder.decode(result.value, { stream: true });
+              var lines = buf.split('\n');
+              buf = lines.pop(); // keep partial line
+              for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].replace(/\r$/, '');
+                if (line.length) log(line);
+              }
+            }
+          } catch (e) {
+            // read error — port may have been closed
+          } finally {
+            reader.releaseLock();
+          }
+          if (!serialReading) break;
+          await new Promise(function (r) { setTimeout(r, 200); });
+        }
+      } finally {
+        if (buf.length) log(buf.replace(/\r$/, ''));
+        log('--- serial monitor stopped ---');
+        await stopSerial();
+      }
+    });
+  }
 })();

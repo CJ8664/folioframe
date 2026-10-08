@@ -2008,9 +2008,11 @@ def _flash_page(available, version, versions):
         <h3>Firmware</h3>
         {picker}
         <button class='btn btn-primary' id='flash-go'>Connect &amp; flash</button>
+        <button class='btn btn-ghost' id='serial-go' style='margin-top:8px'>View serial logs</button>
         <p class='fine'>Your browser will ask which serial port to use —
         pick the one for the frame. The flash runs in the console
-        on the right.</p>
+        on the right. "View serial logs" opens a live serial monitor
+        at 115200 baud — useful for debugging setup without re-flashing.</p>
       </div>
     </div>
     <div class='flash-right'>
