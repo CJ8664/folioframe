@@ -21,6 +21,7 @@ class StatusScreen {
   // --- OTA flow ---
   void showOtaChecking();
   void showOtaUpToDate();
+  void showOtaNoChannel();
   // versionLabel: "v0.0.3 (build 20)" or "build 20" when no version string.
   void showOtaAvailable(const char* versionLabel);
   // Manual mode: an update was staged on an earlier wake.

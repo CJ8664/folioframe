@@ -6,11 +6,12 @@
 // card, QR cards. Uses EinkTheme ink constants (raw sprite nibbles).
 //
 // This does NOT weaken the Panel HAL seam: Gdeb0709e01Panel owns an
-// EinkLayout and uses it inside drawStatus/drawSetupQR. Panel.h is untouched.
+// EinkLayout and uses it inside its screen-rendering methods.
 
 #include <stdint.h>
 
 class TFT_eSprite;
+enum class PanelStatusIcon : uint8_t;
 
 namespace folioframe {
 
@@ -20,6 +21,10 @@ class EinkLayout {
 
   // Fill the whole screen with paper white.
   void clear();
+  void statusBackdrop();
+  void setupBackdrop();
+  void wordmark();
+  void statusIcon(PanelStatusIcon icon);
 
   // Text helpers. datum: 0=TL, 1=TC, 2=TR, 3=ML, 4=MC, 5=MR, 6=BL, 7=BC, 8=BR
   // (matches TFT_eSPI datum constants).
@@ -33,6 +38,10 @@ class EinkLayout {
                   uint8_t textSize, uint16_t color) {
     text(cx, y, str, font, textSize, color, 4);
   }
+  void wrapCenter(int cx, int y, int maxChars, int lineHeight,
+                  const char* str, uint8_t font, uint8_t textSize,
+                  uint16_t color);
+  void progressBar(uint8_t percent);
 
   // "FolioFrame Setup" header, 78px, left-aligned at (80,130).
   // Drawn on every setup/status screen until pairing (per mockups).
@@ -71,9 +80,11 @@ class EinkLayout {
 
   // Small help QR + "Scan for help" caption, bottom-right.
   // 296px QR at (1200-76-296, 1600-64-296-40).
-  void helpQR();
+  void helpQR(int targetSize = 296, int right = 76, int bottom = 64);
 
  private:
+  void drawBackdrop(int clayX, int clayY, int sageCenterX, int sageCenterY);
+
   TFT_eSprite* s_;
 };
 
