@@ -29,27 +29,32 @@ resume without relying on chat history.
 ## Current session state
 
 - Working tree: branch `align-firmware-ui-with-mockups`.
-- Existing branch commit: `5b15f54` (`Align firmware UI with consolidated
-  mockups`), ahead of `origin/main` at the time this sheet was written.
-- The working tree contains uncommitted changes for all three requested
-  groups. A device-mockup rename is staged; other changes are not. Preserve
-  that staging state until the user confirms whether to commit/push.
+- Latest commit: `6665aa6` (`Integrate consolidated mockups, FastAPI adapter,
+  and firmware release CI`), pushed to `origin/align-firmware-ui-with-mockups`.
+- The PR exists as #1 and targets `main`. The branch tracks its remote.
+  `main` advanced after PR creation and GitHub reports merge conflicts; the
+  PR is not merged.
 - Exactly two top-level mockup files are present. The eight former standalone
   service mockups are no longer present; only the device mockup was tracked.
-- The firmware refresh endpoint, startup refresh, and three independent
-  workflows are now implemented locally.
-- The checkout has previously been observed as unauthenticated with `gh`.
-  Recheck GitHub access before pushing or opening PRs; keep all changes local
-  if authentication is still unavailable.
+- The firmware refresh endpoint, startup refresh, and three workflows are
+  committed and pushed. Their live GitHub Actions, release publishing, and
+  Portainer deployment behavior have not yet been confirmed.
+- GitHub CLI was unauthenticated when checked on 2026-10-08. PR #1 was
+  subsequently created by the user. GitHub checks report success for
+  GitGuardian and all CodeQL configurations; there are no review comments or
+  approvals. Current `main` adds a Docker Hub image and git-managed Portainer
+  redeploy flow; preserve these newer base-branch choices when resolving the
+  PR.
 - `build/` and `.pio/` contain generated artifacts; leave them ignored and do
   not stage them.
 - The root review/verification Markdown files are tracked historical reports;
   they have cross-references, so retain them rather than moving or deleting
   them without a separate reference migration.
-- Validation so far: server suite 136/136, firmware native suite 7/7, actual
-  PlatformIO `ee02` build passed. `tools/stub_compile.sh` still fails because
-  its existing Arduino stubs omit APIs/types used by current sources; this is
-  not a failure of the real PlatformIO build.
+- Validation completed: server suite 136/136, firmware native suite 7/7,
+  actual PlatformIO `ee02` build, focused adapter/updater tests, and local
+  workflow/YAML/compose/mockup syntax checks passed. `tools/stub_compile.sh`
+  still fails because its existing Arduino stubs omit APIs/types used by
+  current sources; this is not a failure of the real PlatformIO build.
 
 ## Work items
 
@@ -169,19 +174,17 @@ resume without relying on chat history.
 - [x] Validate Python compilation, shell syntax, all workflow YAML files,
       compose configuration, mockup screen sequences/embedded JavaScript, and
       `git diff --check`.
-- [ ] Inspect the full diff and status; verify no secrets, runtime data, or
-      generated build outputs were added.
-- [ ] Complete the final review of all changed files; fix findings and rerun
-      affected tests.
-- [ ] Group changes into independent PRs, avoiding unrelated files in a PR:
-  1. Consolidated device/service mockups and service mockup-source cleanup.
-  2. FastAPI/Uvicorn service boundary, logging, health checks, tests, and docs.
-  3. Firmware runtime refresh, release workflows, deployment workflow, and
-     related documentation.
-- [ ] Check branch ancestry and GitHub authentication. Ask before committing
-      the currently uncommitted changes. Push only the intended branch(es),
-      create PRs against the appropriate base, and record each PR URL/status
-      here.
+- [x] Inspect the committed tree status; the worktree is clean and generated
+      build/runtime artifacts were not staged.
+- [ ] Complete the requested deep final code review of all changed files; fix
+      findings and rerun affected tests. This is still outstanding.
+- [ ] Finish deep review and resolve PR #1's conflicts with the latest `main`.
+      Revalidate merged workflows, compose/deployment docs, firmware refresh,
+      server compatibility, and tests.
+- [ ] Push the conflict-resolution commit to the PR branch and verify GitHub
+      reports it mergeable with required checks passing.
+- [ ] Merge PR #1 into `main` using GitHub's PR merge mechanism (not a direct
+      push to `main`), then confirm the merge commit and record its URL below.
 
 ## Service audit notes
 
@@ -214,6 +217,4 @@ resume without relying on chat history.
 
 | Group | Branch | PR | Status |
 |---|---|---|---|
-| Consolidated mockups | TBD | TBD | Awaiting final review and commit approval |
-| Server framework hardening | TBD | TBD | Awaiting final review and commit approval |
-| Firmware refresh and CI/CD | TBD | TBD | Awaiting final review and commit approval |
+| Consolidated mockups, server hardening, firmware refresh/CI | align-firmware-ui-with-mockups | [#1](https://github.com/CJ8664/folioframe/pull/1) | Open; conflicts with updated main; review and merge pending |
