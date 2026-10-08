@@ -37,8 +37,10 @@ class Panel {
   virtual bool drawPacked4bpp(const uint8_t* buf, size_t len) = 0;
 
   // Simple text screen for portal / onboarding / errors.
+  // setupHeader: draw the "FolioFrame Setup" header (setup-phase screens).
+  // Pass false for post-pairing status screens (battery, OTA, errors).
   virtual bool drawStatus(const char* title, const char* lines[],
-                          int numLines) = 0;
+                          int numLines, bool setupHeader = true) = 0;
 
   // Setup screen with QR code for the portal URL. Default falls back to
   // drawStatus for panels without QR support.
@@ -47,6 +49,16 @@ class Panel {
     const char* lines[] = {"1. Join Wi-Fi:", apName, "2. Scan QR or open:",
                            url, "3. Enter Wi-Fi details"};
     return drawStatus(title, lines, 5);
+  }
+
+  // Pairing screen with claim code. Default falls back to drawStatus.
+  virtual bool drawPairing(const char* claimCode, const char* where) {
+    const char* lines[] = {
+        "1. Open your FolioFrame",   "   console in a browser",
+        "2. Go to 'Pair a frame'",   "3. Enter this code:",
+        claimCode ? claimCode : "------", "", where ? where : "",
+    };
+    return drawStatus("Pair this frame", lines, 7);
   }
 
   // Small help QR (bottom-right) for non-photo status screens, drawn into

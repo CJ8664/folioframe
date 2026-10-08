@@ -3,6 +3,9 @@
 #include <TFT_eSPI.h>
 #include <qrcode.h>
 
+#include "../ui/EinkLayout.h"
+#include "../ui/EinkTheme.h"
+
 // TFT_eSPI_ESP32_S3.h selects CS_L/CS_H with `#if TFT_CS >= 32`. A D-pin name
 // evaluates to 0 there, so CS0 (GPIO44) would never be asserted.
 #if !defined(TFT_CS) || TFT_CS != 44
@@ -83,34 +86,47 @@ bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
 }
 
 bool Gdeb0709e01Panel::drawStatus(const char* title, const char* lines[],
-                                  int numLines) {
-  Serial.println("drawStatus: fillScreen");
-  // Warm Clay light theme: warm white background, charcoal text.
-  // Panel is 1200x1600 portrait. Font 4 is used throughout (fonts 6/8 have
-  // rendering issues on this driver).
-  epaper.fillRect(0, 0, 1200, 1600, TFT_WHITE);
-  Serial.println("drawStatus: drawString");
+                                  int numLines, bool setupHeader) {
+  // Warm Clay layout per approved mockups. "FolioFrame Setup" header only
+  // on setup-phase screens; post-pairing screens get the title at top.
+  Serial.println("drawStatus: layout");
+  folioframe::EinkLayout layout(&epaper);
+  layout.clear();
 
-  // Title: centered, charcoal
-  epaper.setTextColor(TFT_BLACK);
-  epaper.setTextDatum(MC_DATUM);  // Middle-Center datum for easy centering
+  int titleY;
+  if (setupHeader) {
+    layout.header();
+    layout.rule(230);
+    titleY = 280;
+  } else {
+    // No setup header: title takes the header's position.
+    titleY = 130;
+  }
 
-  int y = 300;
-  epaper.drawString(title, 600, y, 4);
-  y += 100;
+  // Title: 52px (font4 x2), left-aligned at x=82.
+  // Post-pairing screens use 78px for the title since it's the top element.
+  if (setupHeader) {
+    layout.textLeft(82, titleY, title, folioframe::theme::FONT_TITLE, 2,
+                    folioframe::theme::INK_BLACK);
+  } else {
+    layout.textLeft(80, titleY, title, folioframe::theme::FONT_TITLE, 3,
+                    folioframe::theme::INK_BLACK);
+  }
 
-  // Subtitle lines: centered
+  // Body lines: 26px, left-aligned at x=82, 70px spacing.
+  int y = titleY + 100;
   for (int i = 0; i < numLines; i++) {
     if (lines[i][0] == '\0') {
-      y += 40;  // Extra spacing for blank lines
+      y += 40;
       continue;
     }
-    epaper.drawString(lines[i], 600, y, 4);
+    layout.textLeft(82, y, lines[i], folioframe::theme::FONT_BODY, 1,
+                    folioframe::theme::INK_BLACK);
     y += 70;
   }
 
-  epaper.setTextDatum(TL_DATUM);  // Reset to top-left
-  drawHelpQR();  // bottom-right help QR, same single refresh (no extra update)
+  layout.helpQR();
+
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();
   epaper.update();
@@ -166,50 +182,108 @@ void Gdeb0709e01Panel::drawHelpQR() {
 
 bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
                                    const char* url) {
-  // Warm Clay light theme: warm white background, charcoal text.
-  // QR code for the portal URL. Panel is 1200x1600 portrait.
-  // Font 4 is used throughout (fonts 6/8 have rendering issues on this driver).
-  Serial.println("drawSetupQR: fillScreen");
-  epaper.fillRect(0, 0, 1200, 1600, TFT_WHITE);
+  // Warm Clay layout per approved mockups (spectraframe-ux-setup-portal).
+  // Panel is 1200x1600 portrait. Uses EinkLayout helpers + EinkTheme inks.
+  Serial.println("drawSetupQR: layout");
+  folioframe::EinkLayout layout(&epaper);
+  layout.clear();
 
-  epaper.setTextColor(TFT_BLACK);
-  epaper.setTextDatum(MC_DATUM);
+  // Topline + title
+  layout.topline("F O L I O F R A M E   S E T U P");
+  layout.textLeft(80, 130, "Connect to Wi-Fi", folioframe::theme::FONT_TITLE,
+                  3, folioframe::theme::INK_BLACK);
 
-  // Title
-  int y = 180;
-  epaper.drawString("FolioFrame Setup", 600, y, 4);
-  y += 100;
+  // Intro
+  layout.textLeft(84, 224, "Join the frame's Wi-Fi network, then",
+                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
+  layout.textLeft(84, 254, "scan the code to open setup.",
+                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
 
-  // Two QR codes side by side: the setup portal URL and the GitHub
-  // help page (matches the reviewed mockups).
-  const int kQrTarget = 340;
-  const int kQrActual = 41 * (kQrTarget / 41);  // version-6 QR, 328 px
-  const int kQrGap = 80;
-  const int kLeftX = 600 - kQrActual - kQrGap / 2;
-  const int kRightX = 600 + kQrGap / 2;
-  drawQRCode(url, kLeftX, y, kQrTarget);
-  drawQRCode("https://github.com/CJ8664/folioframe", kRightX, y, kQrTarget);
-  y += kQrActual + 40;
-  epaper.drawString("Setup page", kLeftX + kQrActual / 2, y, 4);
-  epaper.drawString("Help & docs", kRightX + kQrActual / 2, y, 4);
-  y += 100;
+  // Rule + network card
+  layout.rule(300);
+  layout.networkCard(apName);
 
-  // Instructions
-  epaper.drawString("1. Join Wi-Fi network:", 600, y, 4);
-  y += 70;
-  epaper.drawString(apName, 600, y, 4);
-  y += 70;
-  epaper.drawString("2. Scan the setup QR", 600, y, 4);
-  y += 70;
-  epaper.drawString("3. Enter Wi-Fi details", 600, y, 4);
+  // Numbered steps
+  int sy = 520;
+  layout.stepCircle(111, sy, 1);
+  layout.textLeft(170, sy - 20, "Join the Wi-Fi network",
+                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
+  layout.textLeft(170, sy + 14, "Look for the name above in your Wi-Fi settings",
+                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
+  sy += 150;
+  layout.stepCircle(111, sy, 2);
+  layout.textLeft(170, sy - 20, "Scan the setup QR",
+                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
+  layout.textLeft(170, sy + 14, "Point your camera at the code below",
+                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
+  sy += 150;
+  layout.stepCircle(111, sy, 3);
+  layout.textLeft(170, sy - 20, "Enter Wi-Fi details",
+                  folioframe::theme::FONT_BODY, 1, folioframe::theme::INK_BLACK);
+  layout.textLeft(170, sy + 14, "Choose your network and enter the password",
+                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
 
-  epaper.setTextDatum(TL_DATUM);
+  // Two QR cards
+  const int cardY = 1000;
+  const int cardW = 498;
+  layout.qrCard(82, cardY, cardW, "S E T U P", "Setup page", url, url);
+  layout.qrCard(82 + cardW + 40, cardY, cardW, "H E L P", "Help & docs",
+                "https://github.com/CJ8664/folioframe",
+                "github.com/CJ8664/folioframe");
+
+  // Footnote
+  layout.textLeft(82, 1520, "Need help? Scan the Help QR above.",
+                  folioframe::theme::FONT_SMALL, 1, folioframe::theme::INK_BLACK);
+
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();
   epaper.update();
   uint32_t dt = millis() - t0;
   Serial.printf("update done in %lums, BUSY=%d\n", dt, digitalRead(4));
   Serial.println("drawSetupQR: done");
+  return true;
+}
+
+bool Gdeb0709e01Panel::drawPairing(const char* claimCode, const char* where) {
+  // Warm Clay pairing screen per approved mockup (spectraframe-ux-pairing).
+  // Measurements verified against the mockup CSS (VERIFY_EINK_UI_A.md).
+  Serial.println("drawPairing: layout");
+  folioframe::EinkLayout layout(&epaper);
+  layout.clear();
+
+  using folioframe::theme::FONT_BODY;
+  using folioframe::theme::FONT_TITLE;
+  using folioframe::theme::INK_BLACK;
+  using folioframe::theme::INK_RED;
+
+  // Header + title (both 75px-equivalent: font4 x3 = 78px)
+  layout.header();
+  layout.textCenter(600, 300, "Pair this frame", FONT_TITLE, 3, INK_BLACK);
+
+  // Steps (48px-equivalent: font4 x2 = 52px), left-aligned at x=190
+  layout.textLeft(190, 460, "1. Open your FolioFrame console", FONT_BODY, 2,
+                  INK_BLACK);
+  layout.textLeft(190, 520, "   in a browser", FONT_BODY, 2, INK_BLACK);
+  layout.textLeft(190, 660, "2. Go to 'Pair a frame'", FONT_BODY, 2, INK_BLACK);
+  layout.textLeft(190, 760, "3. Enter this code:", FONT_BODY, 2, INK_BLACK);
+
+  // Claim code (48px, centered, red for emphasis)
+  layout.textCenter(600, 860, claimCode ? claimCode : "------", FONT_BODY, 2,
+                    INK_RED);
+
+  // Server URL (48px, centered, red/rust)
+  if (where && where[0] != '\0') {
+    layout.textCenter(600, 1020, where, FONT_BODY, 2, INK_RED);
+  }
+
+  layout.helpQR();
+
+  Serial.printf("update start, BUSY=%d\n", digitalRead(4));
+  uint32_t t0 = millis();
+  epaper.update();
+  uint32_t dt = millis() - t0;
+  Serial.printf("update done in %lums, BUSY=%d\n", dt, digitalRead(4));
+  Serial.println("drawPairing: done");
   return true;
 }
 

@@ -11,8 +11,10 @@ class Gdeb0709e01Panel : public Panel {
   bool begin() override;
   bool supportsPartial() const override { return false; }
   bool drawPacked4bpp(const uint8_t* buf, size_t len) override;
-  bool drawStatus(const char* title, const char* lines[], int numLines) override;
+  bool drawStatus(const char* title, const char* lines[], int numLines,
+                  bool setupHeader = true) override;
   bool drawSetupQR(const char* title, const char* apName, const char* url) override;
+  bool drawPairing(const char* claimCode, const char* where) override;
   void drawHelpQR() override;
   void sleep() override;
 

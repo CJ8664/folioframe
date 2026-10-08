@@ -6,13 +6,28 @@
 // produce WRONG inks (TFT_RED=0xF800 -> 0x0 -> BLACK). Use these raw
 // nibble constants instead.
 //
-// Verified mapping (from driver source + hardware):
-//   Nibble 0x0F -> WHITE (panel white)
-//   Nibble 0x00 -> BLACK (panel black)
-//   Nibble 0x0B -> YELLOW
-//   Nibble 0x06 -> RED
-//   Nibble 0x0D -> BLUE
-//   Nibble 0x02 -> GREEN
+// Ink mapping — PARTIALLY UNVERIFIED, see note below.
+//
+// What IS verified (hardware + driver source):
+//   Nibble 0x0F -> WHITE (panel white) — confirmed on device
+//   Nibble 0x00 -> BLACK (panel black) — confirmed on device
+//
+// What is NOT hardware-verified:
+//   The red/yellow/blue/green assignments below are INFERRED from
+//   Seeed_GFX's COLOR_GET macro (sprite nibble -> panel code) combined
+//   with the Spectra6 hardware code enum (panel code -> ink name).
+//   COLOR_GET itself does not name inks; the panel-code -> ink step has
+//   never been confirmed on a physical panel.
+//
+//   Before relying on accent colors, run the ink test screen on the
+//   device and confirm each swatch. If red/green are swapped, flip
+//   INK_RED and INK_GREEN here.
+//
+// Inferred mapping (needs hardware confirmation):
+//   Nibble 0x02 -> RED    (COLOR_GET -> panel 0x06 = Red per Spectra6 enum)
+//   Nibble 0x0B -> YELLOW (COLOR_GET -> panel 0x02; yellow per review table)
+//   Nibble 0x0D -> BLUE   (COLOR_GET -> panel 0x05; blue per review table)
+//   Nibble 0x06 -> GREEN  (COLOR_GET -> panel 0x03; green per review table)
 //
 // Warm Clay mapping:
 //   paper (#f7f1e5) -> WHITE
@@ -29,10 +44,10 @@ namespace theme {
 // Raw nibble values for the 4bpp sprite (color & 0x0F)
 static const uint16_t INK_WHITE  = 0x0F;  // panel white
 static const uint16_t INK_BLACK  = 0x00;  // panel black
-static const uint16_t INK_RED    = 0x06;  // clay/rust accents
+static const uint16_t INK_RED    = 0x02;  // clay/rust accents
 static const uint16_t INK_YELLOW = 0x0B;  // ochre accents
 static const uint16_t INK_BLUE   = 0x0D;  // blue accent
-static const uint16_t INK_GREEN  = 0x02;  // sage accents
+static const uint16_t INK_GREEN  = 0x06;  // sage accents
 
 // Semantic aliases (Warm Clay design language)
 static const uint16_t PAPER      = INK_WHITE;  // screen background
