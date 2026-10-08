@@ -1,11 +1,12 @@
 /* FolioFrame inline flasher — custom UI on esptool-js (no modal dialog).
  *
- * Uses the vendored esptool-js bundle (global `esptooljs`) for the flashing
- * engine, with our own inline progress bar, log console, and status UI.
+ * ES module: imports the vendored esptool-js bundle directly.
+ * Loaded via <script type="module"> on the /flash page.
  *
  * Flow: Connect -> fetch manifest -> download parts -> ESPLoader.main()
  *       -> writeFlash with progress -> hard_reset -> done.
  */
+import * as esptooljs from './esptool-js-bundle.js';
 (function () {
   'use strict';
 
@@ -77,7 +78,7 @@
       setStatus('Web Serial is not available. Use Chrome, Edge, or Opera on a computer (HTTPS required).', 'err');
       return;
     }
-    if (typeof esptooljs === 'undefined') {
+    if (!esptooljs || !esptooljs.ESPLoader || !esptooljs.Transport) {
       setStatus('Flasher engine failed to load. Reload the page.', 'err');
       return;
     }

@@ -2030,8 +2030,7 @@ def _flash_page(available, version, versions):
       </div>
     </div>
   </div>
-  <script src='/static/esptool-js-bundle.js'></script>
-  <script src='/static/inline-flasher.js'></script>"""
+  <script type="module" src='/static/inline-flasher.js'></script>"""
     else:
         body = """
   <div class='card' style='text-align:center'>
