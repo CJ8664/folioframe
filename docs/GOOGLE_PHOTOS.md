@@ -47,8 +47,13 @@ frame set the consent screen to **Production**.
   (or whenever you want more); the server caches originals locally and the
   frame rotates from that cache.
 - Picked download URLs expire after ~1 hour; the server downloads originals
-  immediately, so this doesn't matter after import.
+  immediately, so this doesn't matter after import. Each response is capped
+  at 25 MB to bound memory use; larger files fail the import.
 - Sessions expire if you don't finish picking; just start a new pick.
+- Import status and Picker API session IDs are stored in the service data
+  registry. If the service stops during an import, it resumes after restart
+  when the worker lease expires; downloaded photo IDs are overwritten safely
+  on retry.
 
 ## Headless servers
 

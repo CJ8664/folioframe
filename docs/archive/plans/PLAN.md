@@ -140,7 +140,7 @@ type/signature errors in Arduino-dependent code without the ESP32 toolchain.
 **Level 3 — Hardware checklist (documented, run on device):**
 flash → portal → Wi-Fi join → NTP → frame fetch → panel refresh → deep-sleep
 current → button wake → quiet-hours sleep-through → OTA manifest → OTA install.
-`docs/HARDWARE_CHECKLIST.md`.
+[`HARDWARE_CHECKLIST.md`](../../HARDWARE_CHECKLIST.md).
 
 **Coverage rule:** no new `core/` function without a test; no `app/` behavior
 without either a test or a checklist line.
@@ -150,7 +150,7 @@ without either a test or a checklist line.
 | Risk | Mitigation |
 |---|---|
 | `Seeed_ePaper_7INCH09_C` enum renamed | One-line change in `Gdeb0709e01Panel`; caught at compile |
-| Packed-frame server doesn't exist yet | `PROTOCOL.md` documents the contract; `tools/frame_server.py` reference sender included |
+| Packed-frame server doesn't exist yet | [`PROTOCOL.md`](../../../PROTOCOL.md) documents the contract; [`tools/frame_server.py`](../../../tools/frame_server.py) reference sender included |
 | PSRAM not enabled | `setup()` asserts PSRAM and shows an on-panel error |
 | OTA bricks device | ESP32 A/B partitions: bootloader rolls back on failed boot; manifest MD5 verified pre-flash |
 | Feature creep | v2 list is explicit; v1 scope is frozen in §4 |

@@ -1,9 +1,4 @@
-"""Storage abstraction for SpectraFrame service state.
-
-Phase 1 ships JsonStore (local JSON files). FirestoreStore (or any other
-backend) can implement the same Store interface later without touching
-callers -- see docs/SYSTEM_PLAN.md section 2.4.
-"""
+"""JSON-file storage for SpectraFrame service state."""
 import json
 import os
 import threading
@@ -23,6 +18,15 @@ class Store:
         raise NotImplementedError
 
     def all(self, collection):
+        raise NotImplementedError
+
+    def claim(self, collection, key, owner, lease_seconds):
+        raise NotImplementedError
+
+    def renew_claim(self, collection, key, owner, lease_seconds):
+        raise NotImplementedError
+
+    def finish_claim(self, collection, key, owner, updates):
         raise NotImplementedError
 
 
@@ -51,9 +55,8 @@ class JsonStore(Store):
                 loaded = {}
             if not isinstance(loaded, dict):
                 loaded = {}
-            for k in self.data:
-                if isinstance(loaded.get(k), dict):
-                    self.data[k] = loaded[k]
+            self.data.update({k: v for k, v in loaded.items()
+                              if isinstance(v, dict)})
         else:
             self._save_locked()
 
@@ -85,55 +88,46 @@ class JsonStore(Store):
         with self.lock:
             return dict(self.data.get(collection, {}))
 
+    def claim(self, collection, key, owner, lease_seconds):
+        with self.lock:
+            record = self.data.get(collection, {}).get(key)
+            if not isinstance(record, dict) or record.get("status") not in (
+                    "waiting", "processing"):
+                return None
+            now = time.time()
+            if record.get("lease_until", 0) > now:
+                return None
+            claimed = dict(record, lease_owner=owner,
+                           lease_until=now + lease_seconds,
+                           updated_at=now)
+            self.data[collection][key] = claimed
+            self._save_locked()
+            return claimed
 
-class FirestoreStore(Store):
-    """Firestore backend. Layout: {collection}/{key} documents.
+    def renew_claim(self, collection, key, owner, lease_seconds, status=None):
+        with self.lock:
+            record = self.data.get(collection, {}).get(key)
+            if (not isinstance(record, dict) or
+                    record.get("lease_owner") != owner or
+                    record.get("lease_until", 0) <= time.time()):
+                return False
+            updates = {"lease_until": time.time() + lease_seconds,
+                       "updated_at": time.time()}
+            if status is not None:
+                updates["status"] = status
+            renewed = dict(record, **updates)
+            self.data[collection][key] = renewed
+            self._save_locked()
+            return True
 
-    Sessions get a server-side expiry timestamp so stale sessions can be
-    swept; reads filter them out. Uses the Admin SDK (Application Default
-    Credentials on Cloud Run); Firestore *security rules do not apply* to
-    this path, so firestore.rules denies all client access.
-    """
-
-    def __init__(self, project_id=None, client=None):
-        if client is None:
-            from google.cloud import firestore
-            client = firestore.Client(project=project_id)
-        self._client = client
-
-    def doc(self, path):
-        return self._client.document(path)
-
-    def _ref(self, collection, key):
-        return self._client.collection(collection).document(key)
-
-    def get(self, collection, key, default=None):
-        snap = self._ref(collection, key).get()
-        if not snap.exists:
-            return default
-        data = snap.to_dict()
-        if collection == "sessions" and data.get("expires_at", 0) < \
-                time.time():
-            self._ref(collection, key).delete()
-            return default
-        return data.get("value", default)
-
-    def put(self, collection, key, value):
-        data = {"value": value}
-        if collection == "sessions":
-            data["expires_at"] = time.time() + 24 * 3600
-        self._ref(collection, key).set(data)
-
-    def delete(self, collection, key):
-        self._ref(collection, key).delete()
-
-    def all(self, collection):
-        out = {}
-        now = time.time()
-        for snap in self._client.collection(collection).stream():
-            data = snap.to_dict()
-            if collection == "sessions" and \
-                    data.get("expires_at", 0) < now:
-                continue
-            out[snap.id] = data.get("value", {})
-        return out
+    def finish_claim(self, collection, key, owner, updates):
+        with self.lock:
+            record = self.data.get(collection, {}).get(key)
+            if (not isinstance(record, dict) or
+                    record.get("lease_owner") != owner):
+                return False
+            finished = dict(record, **updates, lease_owner="", lease_until=0,
+                            updated_at=time.time())
+            self.data[collection][key] = finished
+            self._save_locked()
+            return True

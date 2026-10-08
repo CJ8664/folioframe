@@ -50,14 +50,15 @@ never visible to another.
 
 - JSON request bodies capped at 1 MB; photo uploads at 25 MB.
 - Image decodes capped at 50 megapixels (a 25 MB PNG can hide gigapixels).
-- Downloads from URL-based sources capped at 25 MB each.
+- Google Photos and URL-source downloads are capped at 25 MB each.
 - Device-reported telemetry (battery, signal, firmware version) is clamped
   to sane types and ranges at ingestion, so a rogue device can't stash
   markup that renders in the console. User-controlled strings in the
   console are HTML-escaped.
 - Static files can't traverse out of `server/static/`.
-- OAuth errors shown in the browser are generic; provider details stay in
-  the server log.
+- OAuth provider errors shown in the browser remain generic; provider details
+  stay in the server log. If the service OAuth client is missing, the welcome
+  page now tells the administrator which config keys to set.
 
 **Storage.** The registry (users, devices, token hashes) is written
 atomically with mode `0600`. OAuth tokens live in the same store, per user.

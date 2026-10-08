@@ -1,5 +1,4 @@
 Pillow>=9
-numpy>=1.26
 google-auth>=2
 epaper-dithering>=6.0
 fastapi>=0.110,<1

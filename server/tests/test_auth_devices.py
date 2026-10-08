@@ -429,6 +429,16 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b"Google Photos", data)
 
+    def test_unconfigured_welcome_explains_oauth_setup(self):
+        with patch.object(spectra_server.APP.auth, "client_id", ""):
+            status, _, data = self.req("GET", "/")
+
+        self.assertEqual(status, 200)
+        self.assertIn(b"role='status' aria-live='polite'", data)
+        self.assertIn(b"Google sign-in is not configured", data)
+        self.assertIn(b"google.client_id", data)
+        self.assertIn(b"google.client_secret", data)
+
     def test_pwa_assets(self):
         # Web app manifest: valid, installable, references real icons.
         status, hdrs, data = self.req("GET", "/manifest.webmanifest")

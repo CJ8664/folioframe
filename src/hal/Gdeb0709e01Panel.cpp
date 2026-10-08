@@ -304,7 +304,8 @@ bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
 
 bool Gdeb0709e01Panel::drawPairing(const char* claimCode, const char* where) {
   // Warm Clay pairing screen per approved mockup (spectraframe-ux-pairing).
-  // Measurements verified against the mockup CSS (VERIFY_EINK_UI_A.md).
+  // Measurements verified against the mockup CSS
+  // (docs/archive/reviews/VERIFY_EINK_UI_A.md).
   Serial.println("drawPairing: layout");
   folioframe::EinkLayout layout(&epaper);
   layout.clear();

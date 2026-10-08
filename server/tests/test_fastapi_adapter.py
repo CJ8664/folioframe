@@ -53,7 +53,6 @@ class FastAPIAdapterTests(unittest.TestCase):
     def setUp(self):
         self.original_app = spectra_server.APP
         spectra_server.APP = SimpleNamespace(
-            firebase_cfg={"web": {}},
             auth=SimpleNamespace(
                 client_id="example.apps.googleusercontent.com"),
         )
@@ -72,10 +71,7 @@ class FastAPIAdapterTests(unittest.TestCase):
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertEqual(
             json.loads(response.body),
-            {
-                "firebase": {},
-                "google_client_id": "example.apps.googleusercontent.com",
-            },
+            {"google_client_id": "example.apps.googleusercontent.com"},
         )
 
     def test_unsupported_method_returns_allow_header(self):
@@ -155,6 +151,9 @@ class FastAPIAdapterTests(unittest.TestCase):
         refreshed = threading.Event()
 
         class FakeServer:
+            gphotos_imports = SimpleNamespace(start=lambda: None,
+                                              stop=lambda: None)
+
             def tick(self):
                 pass
 

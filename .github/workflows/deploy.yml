@@ -9,7 +9,6 @@ on:
       - "server/**/*.py"
       - "server/static/**"
       - "server/requirements.txt"
-      - "server/requirements-firebase.txt"
       - "server/tests/run.sh"
       - "server/config.json.example"
       - "Dockerfile"
@@ -35,7 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install server dependencies
-        run: python -m pip install -r server/requirements-firebase.txt
+        run: python -m pip install -r server/requirements.txt
 
       - name: Run server tests
         run: bash server/tests/run.sh
