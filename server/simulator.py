@@ -151,19 +151,15 @@ class SimPanel:
         self._draw_backdrop(-280, 190, 1245, 1075)
 
     def _draw_backdrop(self, clay_x, clay_y, sage_cx, sage_cy):
+        """Solid 6-ink backdrop (mirrors EinkLayout::drawBackdrop).
+
+        No halftone bands — the firmware renders pure solid inks since
+        the Spectra 6 panel has no alpha blending.
+        """
         clay_w, clay_h = 920, 560
         sage_r = 425
-        # Clay rounded rect
         self.fill_round_rect(clay_x, clay_y, clay_w, clay_h, 170, CLAY)
-        # Halftone bands on clay
-        for y in range(clay_y + 4, clay_y + clay_h, 8):
-            self.fill_rect(0, y, clay_x + clay_w, 3, PAPER)
-        # Sage circle
         self.fill_circle(sage_cx, sage_cy, sage_r, SAGE)
-        # Halftone bands on sage
-        sage_left = sage_cx - sage_r
-        for y in range(sage_cy - sage_r, DISPLAY_H, 8):
-            self.fill_rect(sage_left, y, DISPLAY_W - sage_left, 1, PAPER)
 
     def wordmark(self):
         # textCenter(600,166,"F O L I O F R A M E",FONT_SMALL,2) = 32px
@@ -335,6 +331,33 @@ class SimPanel:
         self.text_center(x + target_size // 2, y + qr_size + 16,
                          "Scan for help", 16, INK)
 
+    def _quantize_to_spectra6(self):
+        """Quantize the canvas to the exact 6 Spectra inks.
+
+        The GDEB0709E01 panel can only show 6 colors. PIL text and shapes
+        use anti-aliasing which creates intermediate colors — this maps
+        every pixel to its nearest Spectra 6 ink, so the simulator shows
+        exactly what the hardware would show.
+        """
+        inks = [INK_WHITE, INK_BLACK, INK_RED, INK_YELLOW, INK_BLUE, INK_GREEN]
+        # Build a palette image for quantization
+        pal_img = Image.new("P", (1, 1))
+        # Flatten palette to [r,g,b, r,g,b, ...] padded to 768
+        flat = []
+        for ink in inks:
+            flat.extend(ink)
+        flat.extend([0] * (768 - len(flat)))
+        pal_img.putpalette(flat)
+        # Quantize using the 6-color palette (no dithering — panel doesn't dither)
+        self.img = self.img.quantize(palette=pal_img, dither=Image.Dither.NONE)
+        self.img = self.img.convert("RGB")
+        self.draw = ImageDraw.Draw(self.img)
+
+    def get_image(self):
+        """Return the final image quantized to 6 Spectra inks."""
+        self._quantize_to_spectra6()
+        return self.img
+
     def _draw_qr(self, text, x, y, target_size, color):
         """Draw QR code (uses qrcode lib; falls back to text if too long).
 
@@ -394,7 +417,7 @@ def render_device_status(icon, title, detail, footer=None, progress=None):
     elif footer:
         p.wrap_center(600, 1084, 48, 42, footer, 32, INK)
     p.help_qr(185, 52, 42)
-    return p.img
+    return p.get_image()
 
 
 def render_status(title, lines, setup_header=False):
@@ -427,7 +450,7 @@ def render_status(title, lines, setup_header=False):
         y += 70
 
     p.help_qr()  # firmware defaults: (296, 76, 64)
-    return p.img
+    return p.get_image()
 
 
 def render_pairing(claim_code="AB12-CD34", where="frame.chiragjain.info"):
@@ -459,7 +482,7 @@ def render_pairing(claim_code="AB12-CD34", where="frame.chiragjain.info"):
         p.wrap_center(600, 1080, 40, 38, where, 32, CLAY)
 
     p.help_qr()  # firmware defaults: (296, 76, 64)
-    return p.img
+    return p.get_image()
 
 
 def render_setup(ap_name="FF-Setup-ff-e4254d8fee68",
@@ -514,7 +537,7 @@ def render_setup(ap_name="FF-Setup-ff-e4254d8fee68",
     # Footer (FONT_SMALL x1 = 16px)
     p.text_center(600, 1535, "Keep this screen visible until setup is complete.",
                   16, INK)
-    return p.img
+    return p.get_image()
 
 
 # --- Screen registry for web UI ---

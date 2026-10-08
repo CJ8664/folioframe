@@ -37,20 +37,16 @@ void EinkLayout::setupBackdrop() {
 
 void EinkLayout::drawBackdrop(int clayX, int clayY, int sageCenterX,
                               int sageCenterY) {
-  // Halftone bands approximate translucent mockup surfaces with opaque inks.
+  // Solid 6-ink backdrop. The mockups use frosted-glass translucency, but
+  // the Spectra 6 panel has only 6 opaque inks — no alpha blending exists.
+  // Earlier halftone-band dithering tried to fake translucency and produced
+  // visible striping on hardware that matched neither the mockup nor a clean
+  // solid look. Solid shapes are the honest rendering.
   constexpr int clayW = 920;
   constexpr int clayH = 560;
   constexpr int sageRadius = 425;
   s_->fillRoundRect(clayX, clayY, clayW, clayH, 170, INK_RED);
-  for (int y = clayY + 4; y < clayY + clayH; y += 8) {
-    s_->fillRect(0, y, clayX + clayW, 3, INK_WHITE);
-  }
-
   s_->fillCircle(sageCenterX, sageCenterY, sageRadius, INK_GREEN);
-  const int sageLeft = sageCenterX - sageRadius;
-  for (int y = sageCenterY - sageRadius; y < theme::DISPLAY_H; y += 8) {
-    s_->fillRect(sageLeft, y, theme::DISPLAY_W - sageLeft, 1, INK_WHITE);
-  }
 }
 
 void EinkLayout::wordmark() {
