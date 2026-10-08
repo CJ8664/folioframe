@@ -206,16 +206,23 @@ class Server:
         self._shared_sources = {}  # name -> Source (stateless, shared)
         self._photos = {}          # google sub -> GPhotosController
         self._frames = {}          # device_id -> current frame slot
-        # OTA build number: BUILD file (written by package_firmware.sh from
-        # the firmware's FW_BUILD) wins; config/env is the fallback.
-        self.build = str(self.cfg.get("build", "1"))
+        # OTA build number fallback (config/env); the BUILD file
+        # (written by package_firmware.sh from the firmware's FW_BUILD)
+        # wins and is re-read on every access so firmware can be
+        # hot-published into the firmware volume without a restart.
+        self._build_fallback = str(self.cfg.get("build", "1"))
+
+    @property
+    def build(self):
+        """Live OTA build number: BUILD file wins, config is fallback."""
         try:
             with open(os.path.join(FW_DIR, "BUILD")) as f:
                 b = f.read().strip()
                 if b.isdigit():
-                    self.build = b
+                    return b
         except OSError:
             pass
+        return self._build_fallback
 
     # ---- per-user state -------------------------------------------------
     def _get_user(self, sub):

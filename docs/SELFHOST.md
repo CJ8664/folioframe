@@ -108,14 +108,20 @@ Keep `server/config.json` backed up too — it holds your OAuth client secret.
 ## Publishing firmware (OTA + web flash)
 
 1. Build the firmware in PlatformIO (`pio run`, env `ee02`).
-2. Copy the four binaries into `server/firmware/`:
-   - `.pio/build/ee02/bootloader.bin`
-   - `.pio/build/ee02/partitions.bin`
-   - `.pio/build/ee02/firmware.bin`
-   - `boot_app0.bin` from the Arduino-ESP32 package
-     (`~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin`)
-3. Bump `"build"` (and `"fw_version"`) in your config to match the
-   firmware's `FW_BUILD` / `FW_VERSION` (`src/main.cpp`), then redeploy.
+2. Package it: `tools/package_firmware.sh` — copies the four binaries into
+   `server/firmware/` and writes `VERSION`/`BUILD` from `src/main.cpp`'s
+   `FW_VERSION`/`FW_BUILD`.
+3. Publish without redeploying: copy the packaged files into the running
+   container's firmware volume, e.g.
+   `docker cp server/firmware/firmware.bin spectraframe:/app/server/firmware/`
+   (repeat for `bootloader.bin`, `partitions.bin`, `boot_app0.bin`,
+   `firmware-<x.y.z>.bin`, `VERSION`, `BUILD`). They go live immediately —
+   no restart, no rebuild. (In Portainer: no shell, so do this step over
+   SSH on the Docker host.)
+
+The `firmware` named volume persists across redeploys, so a rebuilt image
+never clobbers a newer hot-published firmware. If you ever want the image's
+baked-in firmware to win, clear the volume first.
 
 Then two things work:
 

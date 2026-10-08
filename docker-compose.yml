@@ -35,6 +35,12 @@ services:
       # (empty = anyone may sign in; accounts are isolated per user).
     volumes:
       - spectra-data:/app/server/data
+      # Firmware binaries live here so new releases can be published
+      # without rebuilding the container: copy the packaged files
+      # (tools/package_firmware.sh output) into the volume and they
+      # go live immediately (no restart needed). On first deploy Docker
+      # copies the image's baked-in firmware into the fresh volume.
+      - firmware:/app/server/firmware
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c",
@@ -46,3 +52,4 @@ services:
 
 volumes:
   spectra-data:
+  firmware:
