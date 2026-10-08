@@ -73,13 +73,17 @@ jobs:
           PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
           PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
           PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
+          CF_BYPASS_HEADER: ${{ secrets.CF_BYPASS_HEADER }}
         run: |
           # Git-managed stack: use the git redeploy endpoint (pulls compose
           # from the repo, then pullImage pulls the fresh Docker Hub image).
+          # X-CI-Bypass header lets this through Cloudflare Bot Fight Mode
+          # via a WAF custom rule (re-enable Bot Fight Mode safely).
           # Capture HTTP status so failures show Portainer's actual message.
           HTTP_STATUS=$(curl -s -o /tmp/portainer-redeploy.json -w "%{http_code}" -X PUT \
             "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID" \
             -H "X-API-Key: $PORTAINER_API_KEY" \
+            -H "X-CI-Bypass: $CF_BYPASS_HEADER" \
             -H "Content-Type: application/json" \
             -d '{"pullImage": true, "repositoryReferenceName": "refs/heads/main"}')
           if [ "$HTTP_STATUS" != "200" ]; then
