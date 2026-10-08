@@ -7,8 +7,8 @@
 #   B. Shell (SSH): SPECTRA_CONFIG_JSON="$(cat server/config.json)" \
 #         docker compose up -d
 #
-# This production stack pulls the public GHCR image. For local source builds,
-# combine it with docker-compose.dev.yml.
+# This production stack pulls the public Docker Hub image. For local source
+# builds, combine it with docker-compose.dev.yml.
 #
 # The container needs no config file mounted: on first boot the server
 # writes a default config, then SPECTRA_CONFIG_JSON overrides it.
@@ -19,7 +19,9 @@
 
 services:
   spectraframe:
-    image: ghcr.io/cj8664/folioframe:latest
+    # Image is built by GitHub Actions and published to Docker Hub.
+    # Portainer pulls it — no local build needed.
+    image: erchiragjain92/folioframe:latest
     container_name: spectraframe
     ports:
       - "8765:8765"
@@ -40,8 +42,8 @@ services:
       # (empty = anyone may sign in; accounts are isolated per user).
     volumes:
       - spectra-data:/app/server/data
-      # Runtime firmware releases are refreshed into this persistent volume.
-      # On first deploy Docker seeds it from the image's packaged firmware.
+      # GitHub Release refreshes update this persistent volume at runtime.
+      # Older versioned firmware and the USB-flashing boot assets are retained.
       - firmware:/app/server/firmware
     restart: unless-stopped
     healthcheck:

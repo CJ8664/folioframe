@@ -92,28 +92,30 @@ and survives image updates. For a local source build, use
 
 ## GitHub Actions deployment
 
-The server workflow builds and publishes the public
-`ghcr.io/cj8664/folioframe` image, then asks Portainer CE to pull and redeploy
-the configured stack. Configure these repository settings before enabling
-production deployment:
+The server workflow runs the server tests, builds the public
+`erchiragjain92/folioframe` Docker Hub image, then asks Portainer CE to
+redeploy the Git-managed stack from `main` and pull the new image. Configure
+these repository settings before enabling production deployment:
 
+- Secret `DOCKERHUB_USERNAME`: the Docker Hub account that owns the image
+  (currently `erchiragjain92`, matching `docker-compose.yml`).
+- Secret `DOCKERHUB_TOKEN`: a Docker Hub access token with permission to
+  publish the image.
 - Secret `PORTAINER_API_KEY`: a Portainer API access token.
 - Variable `PORTAINER_URL`: the Portainer API base URL, without a trailing
   slash.
 - Variable `PORTAINER_ENDPOINT_ID`: the numeric Docker endpoint ID.
 - Variable `PORTAINER_STACK_ID`: the numeric stack ID.
-- Set the GHCR package visibility to **public** so the stack can pull the
-  image without registry credentials.
 - Optional `TRUSTED_PROXY_IPS`: comma-separated exact IP addresses of the
   reverse proxies directly connecting to the container. Requests from those
   peers may use `X-Forwarded-For` for per-client rate limits. Keep this list
   limited to trusted proxy addresses; do not add public or untrusted peers.
 
 Only server code/assets and deployment configuration trigger the server
-workflow. Firmware-source changes run a separate build/release workflow;
-pull requests touching firmware paths only compile and never deploy.
-After Portainer redeploys, the workflow checks `GET /healthz` for up to five
-minutes.
+workflow; firmware-only changes are excluded. Firmware-source changes run a
+separate build/release workflow, while pull requests touching firmware paths
+only compile and never deploy. After Portainer redeploys, the workflow checks
+`GET /healthz` for up to five minutes.
 
 ## Backup
 

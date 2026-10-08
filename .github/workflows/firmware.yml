@@ -1,5 +1,7 @@
-name: Firmware build and release
+name: Firmware
 
+# Build EE02 firmware and publish stable releases independently of server
+# image builds and deployments.
 on:
   push:
     branches: [main]
@@ -10,17 +12,20 @@ on:
       - "platformio.ini"
       - "tools/package_firmware.sh"
       - ".github/workflows/firmware.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: firmware-release-${{ github.ref }}
+  group: firmware-main
   cancel-in-progress: false
 
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -30,13 +35,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Restore PlatformIO cache
+      - name: Cache PlatformIO
         uses: actions/cache@v4
         with:
-          path: ~/.platformio
-          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+            ~/.platformio/platforms
+            ~/.platformio/packages
+          key: ${{ runner.os }}-pio-6.2.0-${{ hashFiles('platformio.ini') }}
           restore-keys: |
-            ${{ runner.os }}-platformio-
+            ${{ runner.os }}-pio-6.2.0-
 
       - name: Install PlatformIO
         run: python -m pip install platformio==6.2.0
@@ -48,7 +57,7 @@ jobs:
         run: tools/package_firmware.sh ee02
 
       - name: Read release metadata
-        id: release
+        id: version
         shell: bash
         run: |
           version="$(tr -d '\r\n' < server/firmware/VERSION)"
@@ -56,23 +65,25 @@ jobs:
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$build" =~ ^[1-9][0-9]{0,9}$ ]]
           (( build <= 4294967295 ))
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "tag=folioframe-v$version" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'build=%s\n' "$build" >> "$GITHUB_OUTPUT"
+          printf 'tag=folioframe-v%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Publish GitHub Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: FolioFrame firmware v${{ steps.release.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: FolioFrame Firmware ${{ steps.version.outputs.version }} (build ${{ steps.version.outputs.build }})
           body: |
-            FolioFrame firmware v${{ steps.release.outputs.version }}
-
-            Monotonic firmware build: ${{ steps.release.outputs.build }}
-          files: |
-            server/firmware/firmware.bin
-            server/firmware/firmware-${{ steps.release.outputs.version }}.bin
-            server/firmware/VERSION
-            server/firmware/BUILD
+            Firmware ${{ steps.version.outputs.version }} — build ${{ steps.version.outputs.build }}.
+            Commit: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
           overwrite_files: true
           make_latest: true
+          files: |
+            server/firmware/firmware.bin
+            server/firmware/firmware-${{ steps.version.outputs.version }}.bin
+            server/firmware/VERSION
+            server/firmware/BUILD

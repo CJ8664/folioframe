@@ -50,20 +50,21 @@ State: server/data/registry.json (users/devices/sessions, 0600).
 HTTP requests are served by FastAPI/Uvicorn; the existing route handlers are
 kept behind a bounded adapter while their contracts are migrated incrementally.
 """
-import http.server
-import hashlib
-import json
-import os
-import logging
+import asyncio
 import datetime
-import uuid
+import hashlib
+import http.server
+import json
+import logging
+import os
 import re
 import threading
 import time
 import urllib.parse
+import uuid
 from io import BytesIO
-from contextvars import ContextVar
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from email.message import Message
 from time import perf_counter
 
@@ -2521,6 +2522,8 @@ async function pair(e){
 
 
 MAX_REQUEST_BYTES = 25 * 1024 * 1024
+MAX_CONCURRENT_BODY_REQUESTS = 2
+_body_request_slots = asyncio.Semaphore(MAX_CONCURRENT_BODY_REQUESTS)
 _rotation_stop = None
 _rotation_thread = None
 
@@ -2666,7 +2669,7 @@ async def health():
     return {"status": "ok"}
 
 
-async def dispatch_http_request(request: Request):
+async def _dispatch_http_request(request: Request):
     declared_length = request.headers.get("content-length")
     if declared_length:
         try:
@@ -2705,6 +2708,20 @@ async def dispatch_http_request(request: Request):
         client_address,
         bytes(body),
     )
+
+
+async def dispatch_http_request(request: Request):
+    transfer_encoding = request.headers.get("transfer-encoding", "").lower()
+    content_length = request.headers.get("content-length")
+    may_have_body = (
+        request.method in {"POST", "PATCH", "DELETE"} or
+        (content_length is not None and content_length != "0") or
+        "chunked" in transfer_encoding
+    )
+    if may_have_body:
+        async with _body_request_slots:
+            return await _dispatch_http_request(request)
+    return await _dispatch_http_request(request)
 
 
 app.add_api_route("/", dispatch_http_request, methods=["GET", "POST", "PATCH", "DELETE"],

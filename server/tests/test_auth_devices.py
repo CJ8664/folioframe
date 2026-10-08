@@ -693,6 +693,8 @@ class TestHTTP(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertIn(b"No firmware published", data)
             self.assertIn(b"id='firmware-refresh'", data)
+            self.assertEqual(data.count(b"id='firmware-refresh'"), 1)
+            self.assertNotIn(b"id='fw-refresh-go'", data)
             self.assertIn(b"Check for firmware updates", data)
             self.assertNotIn(b"<esp-web-install-button", data)
             # manifest + binaries 404 cleanly
@@ -723,6 +725,8 @@ class TestHTTP(unittest.TestCase):
             self.assertIn(b"id='fwver'", data)
             self.assertIn(b"id='flash-go'", data)
             self.assertIn(b"id='firmware-refresh'", data)
+            self.assertEqual(data.count(b"id='firmware-refresh'"), 1)
+            self.assertNotIn(b"id='fw-refresh-go'", data)
             self.assertIn(b"id='console-wrap'", data)
             self.assertIn(b"ewt-install-dialog", data)
             self.assertNotIn(b"<esp-web-install-button", data)

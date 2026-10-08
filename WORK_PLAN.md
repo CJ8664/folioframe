@@ -14,8 +14,9 @@ resume without relying on chat history.
   migration.
 - Keep firmware and server build/deploy pipelines independent.
 - Preserve the firmware release tag format `folioframe-vX.Y.Z`, manual
-  `FW_VERSION` / `FW_BUILD` bumps in `src/main.cpp`, public GHCR image, Portainer
-  CE API-token deployment, and the named `firmware` Docker volume.
+  `FW_VERSION` / `FW_BUILD` bumps in `src/main.cpp`, the current public Docker
+  Hub image, Portainer CE API-token deployment, and the named `firmware` Docker
+  volume.
 - Runtime firmware refresh must only consume releases from the configured
   FolioFrame GitHub repository and must not replace current firmware until the
   release assets and metadata have been validated.
@@ -29,32 +30,32 @@ resume without relying on chat history.
 ## Current session state
 
 - Working tree: branch `align-firmware-ui-with-mockups`.
-- Latest commit: `6665aa6` (`Integrate consolidated mockups, FastAPI adapter,
-  and firmware release CI`), pushed to `origin/align-firmware-ui-with-mockups`.
+- Latest committed branch update: `8d75fa6` (`Update work tracker with pull
+  request status`); implementation commit `6665aa6` is pushed to
+  `origin/align-firmware-ui-with-mockups`.
 - The PR exists as #1 and targets `main`. The branch tracks its remote.
-  `main` advanced after PR creation and GitHub reports merge conflicts; the
-  PR is not merged.
+  A merge of `e9afa72` is being resolved locally; `origin/main` has since
+  advanced to `c303a42`. The PR is not merged.
 - Exactly two top-level mockup files are present. The eight former standalone
   service mockups are no longer present; only the device mockup was tracked.
 - The firmware refresh endpoint, startup refresh, and three workflows are
   committed and pushed. Their live GitHub Actions, release publishing, and
   Portainer deployment behavior have not yet been confirmed.
-- GitHub CLI was unauthenticated when checked on 2026-10-08. PR #1 was
-  subsequently created by the user. GitHub checks report success for
-  GitGuardian and all CodeQL configurations; there are no review comments or
-  approvals. Current `main` adds a Docker Hub image and git-managed Portainer
-  redeploy flow; preserve these newer base-branch choices when resolving the
-  PR.
+- GitHub CLI is unauthenticated (checked 2026-10-08). PR #1 was created by the
+  user. Earlier checks reported success for GitGuardian and CodeQL, with no
+  review comments or approvals; these checks predate the current local edits.
+  Preserve the current Docker Hub image and Git-managed Portainer redeploy
+  flow from `main`.
 - `build/` and `.pio/` contain generated artifacts; leave them ignored and do
   not stage them.
 - The root review/verification Markdown files are tracked historical reports;
   they have cross-references, so retain them rather than moving or deleting
   them without a separate reference migration.
-- Validation completed: server suite 136/136, firmware native suite 7/7,
-  actual PlatformIO `ee02` build, focused adapter/updater tests, and local
-  workflow/YAML/compose/mockup syntax checks passed. `tools/stub_compile.sh`
-  still fails because its existing Arduino stubs omit APIs/types used by
-  current sources; this is not a failure of the real PlatformIO build.
+- Latest validation: server suite 138/138, firmware native suite 7/7, and
+  PlatformIO `ee02` build passed. Release artifacts are packaged as firmware
+  0.0.12/build 30. `tools/stub_compile.sh` previously failed because its
+  existing Arduino stubs omit APIs/types used by current sources; the real
+  PlatformIO build passes.
 
 ## Work items
 
@@ -87,7 +88,7 @@ resume without relying on chat history.
 - [x] Configure/document exact trusted proxy peers for forwarded client IPs;
       Uvicorn proxy-header rewriting remains disabled.
 - [x] Run the full server suite after the final adapter and updater changes:
-      136 tests passed.
+      138 tests passed after the PR conflict resolution.
 - [x] Record remaining service UX/feature gaps below without implying that
       the compatibility adapter or in-process photo import is fully
       production-grade.
@@ -117,9 +118,9 @@ resume without relying on chat history.
 - [x] Add `.github/workflows/firmware.yml`: firmware-only main-branch trigger,
       PlatformIO build/package, and GitHub release using the
       `folioframe-vX.Y.Z` tag and specified firmware metadata/binary assets.
-- [x] Add `.github/workflows/deploy.yml`: server-only path filters, GHCR
-      `latest` and `sha-<short>` images, Portainer CE API-token redeploy, then
-      an HTTPS health poll with a five-minute ceiling.
+- [x] Add `.github/workflows/deploy.yml`: server-only path filters, published
+      `latest` and `sha-<short>` Docker images, Portainer CE API-token redeploy,
+      then an HTTPS health poll with a five-minute ceiling.
 - [x] Add `.github/workflows/pr-build.yml`: PR-only firmware compile gate;
       no release or deployment.
 - [x] Ensure deploy path filters include server requirements, the test runner,
@@ -167,15 +168,15 @@ resume without relying on chat history.
 
 ### F. Final verification and review
 
-- [x] Run the complete server suite (136 passed) and focused firmware-refresh
+- [x] Run the complete server suite (138 passed) and focused firmware-refresh
       and FastAPI adapter tests (13 passed).
 - [x] Run firmware host-native tests (7 passed) and the actual
       `pio run -e ee02` build (passed).
 - [x] Validate Python compilation, shell syntax, all workflow YAML files,
       compose configuration, mockup screen sequences/embedded JavaScript, and
       `git diff --check`.
-- [x] Inspect the committed tree status; the worktree is clean and generated
-      build/runtime artifacts were not staged.
+- [x] Keep generated build/runtime artifacts out of the PR; release binaries
+      in `server/firmware/` are intentional packaged deliverables.
 - [ ] Complete the requested deep final code review of all changed files; fix
       findings and rerun affected tests. This is still outstanding.
 - [ ] Finish deep review and resolve PR #1's conflicts with the latest `main`.
@@ -211,7 +212,7 @@ resume without relying on chat history.
 |---|---|
 | Keep two consolidated mockup files: one for device screens and one for service UI/UX. | User requirement. |
 | Adopt FastAPI/Uvicorn while preserving the existing HTTP contracts. | User-selected framework approach. |
-| Implement the supplied CI/CD and GitHub-release firmware-refresh design here as a separate change group. | User-approved; preserve the listed release/deploy decisions. |
+| Implement independent firmware releases and server deployment. | User-approved; retain the existing main-branch Docker Hub image and Git-managed Portainer redeploy choices when integrating newer base commits. |
 
 ## PR tracking
 

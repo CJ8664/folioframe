@@ -1,8 +1,13 @@
 import asyncio
 import json
+import os
+import sys
 import threading
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import spectra_server
 
@@ -109,6 +114,42 @@ class FastAPIAdapterTests(unittest.TestCase):
         oversized_start = next(message for message in oversized
                                if message["type"] == "http.response.start")
         self.assertEqual(oversized_start["status"], 413)
+
+    def test_body_requests_are_globally_bounded(self):
+        active = 0
+        peak = 0
+
+        class Request:
+            method = "POST"
+            headers = {"content-length": "0"}
+            scope = {"raw_path": b"/api/config", "query_string": b""}
+            client = SimpleNamespace(host="127.0.0.1", port=12345)
+            url = SimpleNamespace(path="/api/config")
+
+            async def stream(self):
+                if False:
+                    yield b""
+
+        async def fake_threadpool(*_args):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return "ok"
+
+        async def send_concurrent_requests():
+            with patch.object(
+                    spectra_server, "run_in_threadpool",
+                    new=fake_threadpool):
+                return await asyncio.gather(
+                    *(spectra_server.dispatch_http_request(Request())
+                      for _ in range(6)))
+
+        results = asyncio.run(send_concurrent_requests())
+        self.assertEqual(results, ["ok"] * 6)
+        self.assertEqual(
+            peak, spectra_server.MAX_CONCURRENT_BODY_REQUESTS)
 
     def test_lifespan_starts_firmware_refresh_in_background(self):
         refreshed = threading.Event()

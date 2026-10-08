@@ -1,5 +1,5 @@
 # Local source-build override. Production/Portainer stacks use
-# docker-compose.yml alone and pull the published GHCR image.
+# docker-compose.yml alone and pull the published Docker Hub image.
 services:
   spectraframe:
     build:
