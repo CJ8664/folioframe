@@ -2039,7 +2039,7 @@ def _flash_page(available, version, versions):
       </div>
     </div>
   </div>
-  <script type="module" src='/static/inline-flasher.js'></script>"""
+  <script type="module" src='/static/inline-flasher.js?v=""" + _static_ver("inline-flasher.js") + """'></script>"""
     else:
         body = """
   <div class='card' style='text-align:center'>
