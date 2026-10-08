@@ -297,14 +297,19 @@ bool Gdeb0709e01Panel::drawSetupQR(const char* title, const char* apName,
 }
 
 bool Gdeb0709e01Panel::drawPairing(const char* claimCode, const char* where) {
-  // Warm Clay pairing screen per approved mockup (spectraframe-ux-pairing).
-  // Measurements verified against the mockup CSS
-  // (docs/archive/reviews/VERIFY_EINK_UI_A.md).
+  // Warm Clay pairing screen per approved mockup (folioframe-device-mockups.html,
+  // Frosted Glass section). All elements left-aligned at x=190 except the
+  // claim code (centered) and URL (centered).
+  // Mockup: title 56px@300, steps 39px@480/610/735, code 78px@900,
+  // URL 37px@1080, helpQR 296px@(76,64).
+  // Firmware font system: 52px (font4x2) is closest to 56px; 32px (font2x2)
+  // is closest to 39px/37px.
   Serial.println("drawPairing: layout");
   folioframe::EinkLayout layout(&epaper);
   layout.clear();
 
   using folioframe::theme::FONT_BODY;
+  using folioframe::theme::FONT_SMALL;
   using folioframe::theme::FONT_TITLE;
   using folioframe::theme::INK_BLACK;
   using folioframe::theme::INK_RED;
@@ -312,28 +317,32 @@ bool Gdeb0709e01Panel::drawPairing(const char* claimCode, const char* where) {
   layout.statusBackdrop();
   layout.frameIcon(80, 130, 74, folioframe::theme::INK_GREEN);
   layout.textLeft(175, 130, "FolioFrame Setup", FONT_TITLE, 3, INK_BLACK);
-  layout.textLeft(190, 300, "Pair this frame", FONT_TITLE, 3, INK_BLACK);
-  layout.textLeft(190, 460, "1. Open your FolioFrame console in a browser",
+  // Title: 52px (closest to mockup 56px), left-aligned at x=190, y=300.
+  layout.textLeft(190, 300, "Pair this frame", FONT_TITLE, 2, INK_BLACK);
+  // Steps: 32px (closest to mockup 39px), left-aligned at x=190.
+  layout.textLeft(190, 480, "1. Open your FolioFrame console in a browser",
                   folioframe::theme::FONT_SMALL, 2, INK_BLACK);
-  layout.textLeft(190, 660, "2. Go to 'Pair a frame'",
+  layout.textLeft(190, 610, "2. Go to 'Pair a frame'",
                   folioframe::theme::FONT_SMALL, 2, INK_BLACK);
-  layout.textLeft(190, 760, "3. Enter this code:",
+  layout.textLeft(190, 735, "3. Enter this code:",
                   folioframe::theme::FONT_SMALL, 2, INK_BLACK);
 
-  epaper.fillRoundRect(190, 875, 820, 155, 20,
+  // Claim-code box: centered vertically at y=900 (mockup top:900px with
+  // translateY(-50%)). Box height 155 -> top = 900 - 77 = 823.
+  epaper.fillRoundRect(190, 823, 820, 155, 20,
                        folioframe::theme::INK_WHITE);
-  epaper.drawRoundRect(190, 875, 820, 155, 20, folioframe::theme::INK_RED);
-  layout.textCenter(600, 952, claimCode ? claimCode : "------", FONT_BODY, 3,
+  epaper.drawRoundRect(190, 823, 820, 155, 20, folioframe::theme::INK_RED);
+  layout.textCenter(600, 900, claimCode ? claimCode : "------", FONT_BODY, 3,
                     INK_RED);
 
-  // The mockup's explanatory hint is hidden by default; keep the server URL
-  // clear of the code and help QR instead of rendering that hint as body copy.
+  // Server URL: centered at y=1080, 32px (closest to mockup 37px).
   if (where && where[0] != '\0') {
-    layout.wrapCenter(600, 1055, 40, 38, where,
+    layout.wrapCenter(600, 1080, 40, 38, where,
                       folioframe::theme::FONT_SMALL, 2, INK_RED);
   }
 
-  layout.helpQR(185, 52, 42);
+  // Help QR: mockup specifies 296px at (76, 64) — use firmware defaults.
+  layout.helpQR();
 
   Serial.printf("update start, BUSY=%d\n", digitalRead(4));
   uint32_t t0 = millis();

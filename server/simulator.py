@@ -433,31 +433,32 @@ def render_status(title, lines, setup_header=False):
 def render_pairing(claim_code="AB12-CD34", where="frame.chiragjain.info"):
     """Mirror Gdeb0709e01Panel::drawPairing exactly.
 
-    Layout: statusBackdrop, frameIcon(80,130,74), "FolioFrame Setup" 78px
-    at (175,130), "Pair this frame" 78px at (190,300), three steps 32px
-    at x=190 y=460/660/760, claim-code box (190,875,820,155), code 78px
-    at (600,952), server URL 32px at (600,1055), helpQR(185,52,42).
+    Layout per folioframe-device-mockups.html (Frosted Glass):
+    frameIcon(80,130,74), "FolioFrame Setup" 78px at (175,130),
+    "Pair this frame" 52px at (190,300), three steps 32px at x=190
+    y=480/610/735, claim-code box (190,823,820,155) centered at y=900,
+    code 78px at (600,900), URL 32px at (600,1080), helpQR defaults (296,76,64).
     """
     p = SimPanel()
     p.clear()
     p.status_backdrop()
     p._frame_icon(80, 130, 74, SAGE)
     p.text_left(175, 130, "FolioFrame Setup", 78, INK)
-    p.text_left(190, 300, "Pair this frame", 78, INK)
-    p.text_left(190, 460, "1. Open your FolioFrame console in a browser",
+    p.text_left(190, 300, "Pair this frame", 52, INK)
+    p.text_left(190, 480, "1. Open your FolioFrame console in a browser",
                 32, INK)
-    p.text_left(190, 660, "2. Go to 'Pair a frame'", 32, INK)
-    p.text_left(190, 760, "3. Enter this code:", 32, INK)
+    p.text_left(190, 610, "2. Go to 'Pair a frame'", 32, INK)
+    p.text_left(190, 735, "3. Enter this code:", 32, INK)
 
-    # Claim-code box: white fill + red border
-    p.fill_round_rect(190, 875, 820, 155, 20, PAPER)
-    p.draw_round_rect(190, 875, 820, 155, 20, CLAY)
-    p.text_center(600, 952, claim_code or "------", 78, CLAY)
+    # Claim-code box: centered at y=900
+    p.fill_round_rect(190, 823, 820, 155, 20, PAPER)
+    p.draw_round_rect(190, 823, 820, 155, 20, CLAY)
+    p.text_center(600, 900, claim_code or "------", 78, CLAY)
 
     if where:
-        p.wrap_center(600, 1055, 40, 38, where, 32, CLAY)
+        p.wrap_center(600, 1080, 40, 38, where, 32, CLAY)
 
-    p.help_qr(185, 52, 42)
+    p.help_qr()  # firmware defaults: (296, 76, 64)
     return p.img
 
 
