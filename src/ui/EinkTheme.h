@@ -6,28 +6,19 @@
 // produce WRONG inks (TFT_RED=0xF800 -> 0x0 -> BLACK). Use these raw
 // nibble constants instead.
 //
-// Ink mapping — PARTIALLY UNVERIFIED, see note below.
+// Ink mapping — CALIBRATED FROM HARDWARE PHOTO (0.0.7, 2026-10-07).
 //
-// What IS verified (hardware + driver source):
-//   Nibble 0x0F -> WHITE (panel white) — confirmed on device
-//   Nibble 0x00 -> BLACK (panel black) — confirmed on device
+// The 0.0.7 setup screen photo proves:
+//   Nibble 0x0F -> DARK (was assumed white; photo shows dark background)
+//   Nibble 0x00 -> LIGHT (was assumed black; photo shows light text)
+//   Nibble 0x02 -> GREEN (network card drawn with 0x02 appeared green)
 //
-// What is NOT hardware-verified:
-//   The red/yellow/blue/green assignments below are INFERRED from
-//   Seeed_GFX's COLOR_GET macro (sprite nibble -> panel code) combined
-//   with the Spectra6 hardware code enum (panel code -> ink name).
-//   COLOR_GET itself does not name inks; the panel-code -> ink step has
-//   never been confirmed on a physical panel.
-//
-//   Before relying on accent colors, run the ink test screen on the
-//   device and confirm each swatch. If red/green are swapped, flip
-//   INK_RED and INK_GREEN here.
-//
-// Inferred mapping (needs hardware confirmation):
-//   Nibble 0x02 -> RED    (COLOR_GET -> panel 0x06 = Red per Spectra6 enum)
-//   Nibble 0x0B -> YELLOW (COLOR_GET -> panel 0x02; yellow per review table)
-//   Nibble 0x0D -> BLUE   (COLOR_GET -> panel 0x05; blue per review table)
-//   Nibble 0x06 -> GREEN  (COLOR_GET -> panel 0x03; green per review table)
+// Therefore:
+//   WHITE (paper bg) must use 0x00
+//   BLACK (text) must use 0x0F
+//   GREEN (sage) is 0x02 (confirmed)
+//   RED (clay/rust) reverted to 0x06 (original value; 0x02 is green, not red)
+//   YELLOW/BLUE unchanged (0x0B, 0x0D) — still unverified, avoid for now
 //
 // Warm Clay mapping:
 //   paper (#f7f1e5) -> WHITE
@@ -42,12 +33,12 @@ namespace folioframe {
 namespace theme {
 
 // Raw nibble values for the 4bpp sprite (color & 0x0F)
-static const uint16_t INK_WHITE  = 0x0F;  // panel white
-static const uint16_t INK_BLACK  = 0x00;  // panel black
-static const uint16_t INK_RED    = 0x02;  // clay/rust accents
+static const uint16_t INK_WHITE  = 0x00;  // panel white (photo: 0x00 -> light)
+static const uint16_t INK_BLACK  = 0x0F;  // panel black (photo: 0x0F -> dark)
+static const uint16_t INK_RED    = 0x06;  // clay/rust accents
 static const uint16_t INK_YELLOW = 0x0B;  // ochre accents
 static const uint16_t INK_BLUE   = 0x0D;  // blue accent
-static const uint16_t INK_GREEN  = 0x06;  // sage accents
+static const uint16_t INK_GREEN  = 0x02;  // sage accents (photo: 0x02 -> green)
 
 // Semantic aliases (Warm Clay design language)
 static const uint16_t PAPER      = INK_WHITE;  // screen background
