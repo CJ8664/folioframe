@@ -7,6 +7,7 @@ Implements PROTOCOL.md v2.1:
     GET  /login                         -> redirects to /
     POST /api/auth/token                {id_token} -> session
     GET  /api/config                    public client config (Google client ID)
+    POST /api/firmware/refresh          refresh published firmware assets
   Human (signed-in session; Google sign-in with the service's OAuth
   client -- the admin configures it once in "google"):
     GET  /claim                         pair-a-device page
@@ -46,22 +47,32 @@ Config: server/config.json (created with defaults on first run), or
 SPECTRA_CONFIG_JSON env (Portainer). The admin sets the Google OAuth
 client once under "google"; auth.allowlist optionally gates sign-in.
 State: server/data/registry.json (users/devices/sessions, 0600).
+HTTP requests are served by FastAPI/Uvicorn; the existing route handlers are
+kept behind a bounded adapter while their contracts are migrated incrementally.
 """
 import http.server
 import hashlib
 import json
 import os
+import logging
+import datetime
 import uuid
 import re
 import threading
 import time
 import urllib.parse
 from io import BytesIO
+from contextvars import ContextVar
+from contextlib import asynccontextmanager
+from email.message import Message
+from time import perf_counter
 
+from fastapi import FastAPI, Request
+from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse, Response
 from PIL import Image
 
 import pipeline
-import logging
 import sources.folder  # noqa: F401  (registers)
 import sources.picsum  # noqa: F401
 import sources.url  # noqa: F401
@@ -70,10 +81,40 @@ import sources.google_photos  # noqa: F401
 import sources.uploads  # noqa: F401  (registers UploadsSource)
 
 logger = logging.getLogger("folioframe")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+request_id_context = ContextVar("request_id", default="")
+
+
+class StructuredLogFormatter(logging.Formatter):
+    def format(self, record):
+        timestamp = datetime.datetime.fromtimestamp(
+            record.created, datetime.timezone.utc).isoformat()
+        entry = {
+            "timestamp": timestamp,
+            "severity": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        request_id = getattr(record, "request_id", "") or request_id_context.get()
+        if request_id:
+            entry["request_id"] = request_id
+        for field in ("method", "path", "status_code", "duration_ms"):
+            value = getattr(record, field, None)
+            if value is not None:
+                entry[field] = value
+        if record.exc_info:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, ensure_ascii=False)
+
+
+def configure_logging():
+    level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(),
+                    logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(StructuredLogFormatter())
+    logging.basicConfig(level=level, handlers=[handler], force=True)
+
+
+configure_logging()
 from sources import SOURCES
 from sources.google_photos import (GPhotosController, PickerClient, PickFlow)
 from auth import AuthManager, AuthError, SESSION_COOKIE
@@ -81,6 +122,7 @@ from devices import DeviceRegistry, AlreadyPaired, BadClaim, RateLimiter
 from store import JsonStore, FirestoreStore
 from blobs import LocalBlobStore, GCSBlobStore
 from token_store import StoreTokenStore
+from firmware_releases import FirmwareReleaseUpdater
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -113,12 +155,11 @@ DEFAULT_CONFIG = {
     "dashboard": {"lat": 36.17, "lon": -115.14,
                   "timezone": "America/Los_Angeles"},
     "auth": {"allowlist": []},
-    # Firmware OTA: bump "build" (integer) whenever you publish a new
-    # server/firmware/firmware.bin. Devices whose FW_BUILD is lower will
-    # download and flash it (battery-gated, MD5-verified).
+    # Fallback OTA build value when no packaged BUILD file is present.
+    # Production builds use FW_BUILD from src/main.cpp via the release asset.
     "build": "5",
-    # Shown on the public /flash page and in its esp-web-tools manifest.
-    # Keep in sync with FW_VERSION in src/main.cpp.
+    # Fallback label for the public /flash page when VERSION is absent.
+    # Production builds use FW_VERSION from src/main.cpp via the release asset.
     "fw_version": "3.2.0",
     # The service's Google OAuth client (admin one-time setup): used for
     # "Sign in with Google" and for Google Photos. Users never see these
@@ -211,6 +252,7 @@ class Server:
         # wins and is re-read on every access so firmware can be
         # hot-published into the firmware volume without a restart.
         self._build_fallback = str(self.cfg.get("build", "1"))
+        self._firmware_release_updater = FirmwareReleaseUpdater(FW_DIR)
 
     @property
     def build(self):
@@ -303,6 +345,11 @@ class Server:
         if os.path.isfile(os.path.join(FW_DIR, name)):
             return name
         return None
+
+    def refresh_firmware_from_releases(self):
+        """Refresh firmware assets from the canonical GitHub Releases feed."""
+        return self._firmware_release_updater.refresh(
+            self.fw_version(), self.build)
 
     def uploads_dir(self, sub):
         """Per-user uploads directory (created on demand)."""
@@ -445,6 +492,8 @@ class Server:
                              blob_prefix=gp.blob_prefix).run(session["id"])
                 gp.pick_state.update(status="done", count=n)
             except Exception as e:
+                logger.error("Google Photos import failed (%s)",
+                             type(e).__name__)
                 gp.pick_state.update(status="error", error=str(e))
 
         threading.Thread(target=run, daemon=True).start()
@@ -1233,6 +1282,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
 
+        if p == "/api/firmware/refresh":
+            if not APP.ratelimit.check(
+                    "firmware-refresh:" + self._client_ip()):
+                self._json(429, {
+                    "ok": False,
+                    "error": "rate limited, try again soon",
+                })
+                return
+            result = APP.refresh_firmware_from_releases()
+            self._json(200 if result["ok"] else 502, result)
+            return
+
         if p == "/api/auth/token":
             data = self._read_json()
             if data is None:
@@ -2007,6 +2068,11 @@ def _flash_page(available, version, versions):
       <div class='card'>
         <h3>Firmware</h3>
         {picker}
+        <button class='btn btn-ghost' id='firmware-refresh' type='button'>
+          Check for firmware updates
+        </button>
+        <p class='fine' id='firmware-refresh-status' role='status'
+          aria-live='polite'></p>
         <button class='btn btn-primary' id='flash-go'>Connect &amp; flash</button>
         <button class='btn btn-ghost' id='serial-go' style='margin-top:8px'>View serial logs</button>
         <p class='fine'>Your browser will ask which serial port to use —
@@ -2044,9 +2110,13 @@ def _flash_page(available, version, versions):
         body = """
   <div class='card' style='text-align:center'>
     <p><b>No firmware published yet.</b></p>
-    <p class='muted'>The admin hasn't published the flash binaries on this
-    server. Ask them to drop the four <span class='mono'>.bin</span> files
-    into <span class='mono'>server/firmware/</span> and redeploy.</p>
+    <p class='muted'>Check GitHub Releases for the latest firmware. The
+    web flasher appears when all four flash binaries are available.</p>
+    <button class='btn btn-primary' id='firmware-refresh' type='button'>
+      Check for firmware updates
+    </button>
+    <p class='fine' id='firmware-refresh-status' role='status'
+      aria-live='polite'></p>
   </div>"""
     return ("""<html><head><meta name='viewport'
 content='width=device-width,initial-scale=1,viewport-fit=cover'>
@@ -2115,7 +2185,10 @@ esp-web-install-button{--esp-tools-button-color:var(--accent);
     this page. No login needed.</p>
   </div>""" + body + """
 </main>
-""" + HINT_JS + SW_REGISTER + """</body></html>""")
+""" + HINT_JS + """
+<script src='/static/firmware-refresh.js?v=""" + _static_ver(
+        "firmware-refresh.js") + """'></script>
+""" + SW_REGISTER + """</body></html>""")
 
 
 CONSOLE_HTML = """<html><head><meta name='viewport'
@@ -2447,24 +2520,217 @@ async function pair(e){
 """ + HINT_JS + SW_REGISTER + """</body></html>"""
 
 
+MAX_REQUEST_BYTES = 25 * 1024 * 1024
+_rotation_stop = None
+_rotation_thread = None
+
+
+def _dispatch_legacy_request(method, path, headers, client_address, body):
+    """Run the established HTTP route logic behind the ASGI request boundary."""
+    handler = Handler.__new__(Handler)
+    handler.path = path
+    handler.command = method
+    handler.client_address = client_address
+    handler.headers = Message()
+    for name, value in headers:
+        handler.headers.add_header(name, value)
+    if not handler.headers.get("Content-Length"):
+        handler.headers.add_header("Content-Length", str(len(body)))
+    handler.rfile = BytesIO(body)
+    handler.wfile = BytesIO()
+    response_state = {"status": 200, "headers": []}
+
+    def send_response(status, message=None):
+        response_state["status"] = status
+
+    def send_header(name, value):
+        response_state["headers"].append((name, value))
+
+    handler.send_response = send_response
+    handler.send_header = send_header
+    handler.end_headers = lambda: None
+
+    dispatch = {
+        "GET": Handler.do_GET,
+        "POST": Handler.do_POST,
+        "PATCH": Handler.do_PATCH,
+        "DELETE": Handler.do_DELETE,
+    }.get(method)
+    if dispatch is None:
+        return Response(status_code=405, headers={"Allow": "GET, POST, PATCH, DELETE"})
+
+    dispatch(handler)
+    content = handler.wfile.getvalue()
+    response = Response(content=content, status_code=response_state["status"])
+    response.raw_headers.extend(
+        (name.lower().encode("latin-1"), value.encode("latin-1"))
+        for name, value in response_state["headers"]
+        if name.lower() != "content-length"
+    )
+    return response
+
+
+@asynccontextmanager
+async def lifespan(_application):
+    global APP, _rotation_stop, _rotation_thread
+    if APP is None:
+        APP = Server()
+    _rotation_stop = threading.Event()
+
+    def rotation_loop():
+        while not _rotation_stop.wait(30):
+            try:
+                APP.tick()
+            except Exception:
+                logger.exception("Background rotation tick failed")
+
+    _rotation_thread = threading.Thread(
+        target=rotation_loop, name="frame-rotation", daemon=True)
+    _rotation_thread.start()
+
+    def refresh_firmware_on_startup():
+        try:
+            result = APP.refresh_firmware_from_releases()
+            if not result["ok"]:
+                logger.warning(
+                    "Startup firmware refresh did not complete: %s",
+                    result.get("error", result["status"]),
+                )
+        except Exception:
+            logger.exception("Unexpected startup firmware refresh failure")
+
+    firmware_thread = threading.Thread(
+        target=refresh_firmware_on_startup,
+        name="firmware-release-refresh",
+        daemon=True,
+    )
+    firmware_thread.start()
+    logger.info("FolioFrame service started")
+    try:
+        yield
+    finally:
+        _rotation_stop.set()
+        _rotation_thread.join(timeout=5)
+        firmware_thread.join(timeout=5)
+        logger.info("FolioFrame service stopped")
+
+
+app = FastAPI(
+    title="FolioFrame service",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
+)
+
+
+@app.middleware("http")
+async def observe_requests(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", request_id):
+        request_id = uuid.uuid4().hex
+    token = request_id_context.set(request_id)
+    started = perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception:
+        logger.exception(
+            "Unhandled request failure",
+            extra={"method": request.method, "path": request.url.path},
+        )
+        response = JSONResponse(
+            {"ok": False, "error": "internal server error",
+             "request_id": request_id},
+            status_code=500,
+        )
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "HTTP request completed",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": status_code,
+            "duration_ms": round((perf_counter() - started) * 1000, 2),
+        },
+    )
+    request_id_context.reset(token)
+    return response
+
+
+@app.get("/healthz", include_in_schema=False)
+async def health():
+    if APP is None:
+        return JSONResponse({"status": "starting"}, status_code=503)
+    return {"status": "ok"}
+
+
+async def dispatch_http_request(request: Request):
+    declared_length = request.headers.get("content-length")
+    if declared_length:
+        try:
+            if int(declared_length) > MAX_REQUEST_BYTES:
+                return JSONResponse(
+                    {"ok": False, "error": "request body too large"},
+                    status_code=413,
+                )
+        except ValueError:
+            return JSONResponse(
+                {"ok": False, "error": "invalid content length"},
+                status_code=400,
+            )
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_REQUEST_BYTES:
+            return JSONResponse(
+                {"ok": False, "error": "request body too large"},
+                status_code=413,
+            )
+
+    raw_path = request.scope.get("raw_path", b"")
+    path = raw_path.decode("latin-1") if raw_path else request.url.path
+    query = request.scope.get("query_string", b"")
+    if query:
+        path += "?" + query.decode("latin-1")
+    client = request.client
+    client_address = (client.host, client.port) if client else ("", 0)
+    return await run_in_threadpool(
+        _dispatch_legacy_request,
+        request.method,
+        path,
+        list(request.headers.items()),
+        client_address,
+        bytes(body),
+    )
+
+
+app.add_api_route("/", dispatch_http_request, methods=["GET", "POST", "PATCH", "DELETE"],
+                  include_in_schema=False)
+app.add_api_route("/{path:path}", dispatch_http_request,
+                  methods=["GET", "POST", "PATCH", "DELETE"],
+                  include_in_schema=False)
+
+
 def main():
     global APP
     APP = Server()
+    import uvicorn
 
-    def ticker():
-        while True:
-            time.sleep(30)
-            try:
-                APP.tick()
-            except Exception as e:
-                logger.error(f"tick error: {e}")
-
-    threading.Thread(target=ticker, daemon=True).start()
-    # Cloud Run injects $PORT; local runs use config.json.
     port = int(os.environ.get("PORT", APP.cfg.get("port", 8765)))
-    srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    logger.info(f"SpectraFrame server v2.2 on :{port} (frame {W}x{H})")
-    srv.serve_forever()
+    logger.info("Starting FolioFrame on port %s (%sx%s)", port, W, H)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        limit_concurrency=128,
+        timeout_keep_alive=5,
+        proxy_headers=False,
+        log_config=None,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":

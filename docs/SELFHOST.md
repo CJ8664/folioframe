@@ -50,7 +50,7 @@ config comes from the env var) and deploy again.
 
 ```bash
 git clone https://github.com/CJ8664/folioframe.git
-cd spectra-frame
+cd folioframe
 cp server/config.json.example server/config.json
 # edit server/config.json:
 #   public_url  -> your public HTTPS URL
@@ -58,7 +58,9 @@ cp server/config.json.example server/config.json
 #                     NOT OAuth setup, just an email list)
 #   google.client_id / google.client_secret -> the service's one OAuth
 #                     client (create once in Google Cloud Console)
-SPECTRA_CONFIG_JSON="$(cat server/config.json)" docker compose up -d --build
+export SPECTRA_CONFIG_JSON="$(cat server/config.json)"
+docker compose pull
+docker compose up -d
 ```
 
 Open the site: the public **welcome page** has a normal Sign in with
@@ -80,11 +82,38 @@ so plain `docker compose` works — no app-store packaging needed.
 ```bash
 cd spectra-frame
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Your data (devices, pairings, photos) lives in the `spectra-data` volume
-and survives rebuilds.
+and survives image updates. For a local source build, use
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`.
+
+## GitHub Actions deployment
+
+The server workflow builds and publishes the public
+`ghcr.io/cj8664/folioframe` image, then asks Portainer CE to pull and redeploy
+the configured stack. Configure these repository settings before enabling
+production deployment:
+
+- Secret `PORTAINER_API_KEY`: a Portainer API access token.
+- Variable `PORTAINER_URL`: the Portainer API base URL, without a trailing
+  slash.
+- Variable `PORTAINER_ENDPOINT_ID`: the numeric Docker endpoint ID.
+- Variable `PORTAINER_STACK_ID`: the numeric stack ID.
+- Set the GHCR package visibility to **public** so the stack can pull the
+  image without registry credentials.
+- Optional `TRUSTED_PROXY_IPS`: comma-separated exact IP addresses of the
+  reverse proxies directly connecting to the container. Requests from those
+  peers may use `X-Forwarded-For` for per-client rate limits. Keep this list
+  limited to trusted proxy addresses; do not add public or untrusted peers.
+
+Only server code/assets and deployment configuration trigger the server
+workflow. Firmware-source changes run a separate build/release workflow;
+pull requests touching firmware paths only compile and never deploy.
+After Portainer redeploys, the workflow checks `GET /healthz` for up to five
+minutes.
 
 ## Backup
 
@@ -102,26 +131,32 @@ Keep `server/config.json` backed up too — it holds your OAuth client secret.
   portal) to the same public HTTPS host. First boot shows a claim code on
   the e-ink screen — enter it at `<your-url>/claim` in the console.
 - Logs: `docker compose logs -f spectraframe`.
+- The container writes structured JSON request/application logs to stdout;
+  set `LOG_LEVEL` to adjust verbosity. `GET /healthz` is the lightweight
+  liveness endpoint used by the container health check.
 - Resource use is tiny: the container idles near zero and wakes to render
   frames on the rotation interval.
 
 ## Publishing firmware (OTA + web flash)
 
-1. Build the firmware in PlatformIO (`pio run`, env `ee02`).
-2. Package it: `tools/package_firmware.sh` — copies the four binaries into
-   `server/firmware/` and writes `VERSION`/`BUILD` from `src/main.cpp`'s
-   `FW_VERSION`/`FW_BUILD`.
-3. Publish without redeploying: copy the packaged files into the running
-   container's firmware volume, e.g.
-   `docker cp server/firmware/firmware.bin spectraframe:/app/server/firmware/`
-   (repeat for `bootloader.bin`, `partitions.bin`, `boot_app0.bin`,
-   `firmware-<x.y.z>.bin`, `VERSION`, `BUILD`). They go live immediately —
-   no restart, no rebuild. (In Portainer: no shell, so do this step over
-   SSH on the Docker host.)
+Firmware builds and server deployments are independent. On `main`, changes to
+firmware source paths run the firmware workflow: it builds `ee02`, runs
+`tools/package_firmware.sh`, and publishes a GitHub Release named
+`folioframe-vX.Y.Z` using the manually maintained `FW_VERSION` and `FW_BUILD`
+in `src/main.cpp`.
 
-The `firmware` named volume persists across redeploys, so a rebuilt image
-never clobbers a newer hot-published firmware. If you ever want the image's
-baked-in firmware to win, clear the volume first.
+The server checks GitHub Releases in the background at startup. The public
+`/flash` page also has **Check for firmware updates**, which calls
+`POST /api/firmware/refresh`. This public, rate-limited endpoint is available
+without a login so the public flasher can refresh its listing. The server
+validates release metadata and firmware images before installing them and
+keeps prior versioned binaries so the `/flash` version picker remains usable.
+This flow does not require a Docker image rebuild or Portainer redeploy.
+
+The `firmware` named volume persists across server redeploys. On first mount,
+Docker seeds it from the image; subsequent GitHub Release refreshes update the
+firmware files in that volume without removing older versions or replacing the
+web-flash bootloader/partition assets.
 
 Then two things work:
 

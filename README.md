@@ -35,7 +35,7 @@ any server can feed the frame, and any frame can talk to the server.
 ### 1. Run the server
 
 ```bash
-pip install -r server/requirements.txt   # Pillow + google-auth
+pip install -r server/requirements.txt   # Pillow, Google auth, FastAPI/Uvicorn
 python3 server/spectra_server.py         # :8765, writes server/config.json
 ```
 
@@ -86,7 +86,7 @@ notes), is in [docs/SECURITY.md](docs/SECURITY.md).
   machine, no hardware)
 - **Firmware syntax check** — `tools/stub_compile.sh` (compiles all of
   `src/` against Arduino API stubs)
-- **Server tests** — `server/tests/run.sh` (92 cases, incl. HTTP integration)
+- **Server tests** — `server/tests/run.sh` (unit and HTTP integration tests)
 - **On-device** — [docs/HARDWARE_CHECKLIST.md](docs/HARDWARE_CHECKLIST.md)
 
 ## Docs

@@ -1,0 +1,107 @@
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**/*.py"
+      - "server/static/**"
+      - "server/requirements.txt"
+      - "server/requirements-firebase.txt"
+      - "server/tests/run.sh"
+      - "server/config.json.example"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: server-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY_IMAGE: ghcr.io/cj8664/folioframe
+
+jobs:
+  build-publish-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server dependencies
+        run: python -m pip install -r server/requirements-firebase.txt
+
+      - name: Run server tests
+        run: bash server/tests/run.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image tags
+        id: vars
+        run: echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY_IMAGE }}:latest
+            ${{ env.REGISTRY_IMAGE }}:sha-${{ steps.vars.outputs.short_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Redeploy Portainer stack
+        env:
+          PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+          PORTAINER_URL: ${{ vars.PORTAINER_URL }}
+          PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
+          PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PORTAINER_API_KEY"
+          test -n "$PORTAINER_URL"
+          [[ "$PORTAINER_ENDPOINT_ID" =~ ^[0-9]+$ ]]
+          [[ "$PORTAINER_STACK_ID" =~ ^[0-9]+$ ]]
+          portainer_url="${PORTAINER_URL%/}"
+          curl --fail-with-body --silent --show-error \
+            --max-time 60 --retry 5 --retry-connrefused --retry-delay 2 \
+            --request PUT \
+            --header "X-API-Key: $PORTAINER_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data '{"pullImage":true}' \
+            "$portainer_url/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID"
+
+      - name: Verify deployed service health
+        shell: bash
+        run: |
+          set -euo pipefail
+          health_url="https://frame.chiragjain.info/healthz"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 "$health_url"; then
+              echo "Server health check passed."
+              exit 0
+            fi
+            echo "Health check $attempt/30 failed; retrying in 5 seconds."
+            sleep 5
+          done
+          echo "Server did not become healthy within five minutes." >&2
+          exit 1
