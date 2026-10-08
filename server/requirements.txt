@@ -1,4 +1,5 @@
 Pillow>=9
+qrcode>=7
 google-auth>=2
 requests>=2
 epaper-dithering>=6.0

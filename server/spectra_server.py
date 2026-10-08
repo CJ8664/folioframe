@@ -840,6 +840,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 {"Cache-Control": "no-store"})
             return
 
+        if p == "/simulator":
+            self._send(200, "text/html", _simulator_page().encode(),
+                       {"Cache-Control": "no-store"})
+            return
+
+        if p.startswith("/simulator/img/"):
+            name = p[len("/simulator/img/"):]
+            # Strict allowlist: only known screen names, no path traversal.
+            import simulator as _sim
+            if name not in _sim.SCREENS:
+                self._json(404, {"ok": False, "error": "unknown screen"})
+                return
+            try:
+                img = _sim.SCREENS[name]()
+                # Downscale for web display (1200x1600 -> 360x480)
+                img.thumbnail((360, 480), Image.LANCZOS)
+                buf = BytesIO()
+                img.save(buf, "PNG")
+                self._send(200, "image/png", buf.getvalue(),
+                           {"Cache-Control": "no-store"})
+            except Exception as e:
+                self._json(500, {"ok": False, "error": "render failed"})
+            return
+
         if p == "/flash/manifest.json":
             if not APP.flash_available():
                 self._json(404, {"ok": False,
@@ -2005,6 +2029,48 @@ content='width=device-width,initial-scale=1,viewport-fit=cover'>
 </div>
 <script src='/static/photos.js?v=""" + _static_ver("photos.js") + """'></script>
 """ + SW_REGISTER + """</body></html>"""
+
+
+def _simulator_page():
+    """Display simulator: renders firmware e-paper screens without hardware.
+
+    Each screen is rendered on-demand by server/simulator.py (which mirrors
+    src/ui/EinkLayout.cpp) and served as PNG via /simulator/img/<name>.
+    """
+    import simulator as _sim
+    cards = []
+    for name in sorted(_sim.SCREENS.keys()):
+        label = name.replace("_", " ").title()
+        cards.append(
+            f"<div class='card'><h3>{label}</h3>"
+            f"<img src='/simulator/img/{name}' alt='{label}' "
+            f"loading='lazy' style='width:100%;max-width:360px;"
+            f"border:1px solid #ddd;border-radius:8px;'>"
+            f"<p class='fine'>1200&times;1600 Spectra 6 &mdash; "
+            f"6 inks, ~30s real refresh</p></div>")
+    return """<html><head><meta name='viewport'
+content='width=device-width,initial-scale=1,viewport-fit=cover'>
+<title>FolioFrame Display Simulator</title>
+""" + PWA_HEAD + THEME_CSS + """
+<style>
+.sim-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+</style>
+</head><body>
+<div class='bg'><div class='blob b1'></div><div class='blob b2'></div>
+<div class='blob b3'></div></div>
+<main class='sheet sheet-wide'>
+  <div class='card hero'>
+    <h1>Display Simulator</h1>
+    <p class='tag'>Every firmware screen, rendered without hardware.</p>
+    <p class='fine'>Simulates the Good Display GDEB0709E01 (1200&times;1600,
+    Spectra 6, 6 inks). Layout mirrors <code>src/ui/EinkLayout.cpp</code>
+    pixel-for-pixel. Real panel refreshes in ~30s; here it's instant.</p>
+  </div>
+  <div class='sim-grid'>
+    """ + "\n".join(cards) + """
+  </div>
+  <p class='fine'><a href='/'>&larr; Back to console</a></p>
+</main></body></html>"""
 
 
 def _flash_page(available, version, versions):
