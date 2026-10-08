@@ -102,6 +102,8 @@ these repository settings before enabling production deployment:
 - Secret `DOCKERHUB_TOKEN`: a Docker Hub access token with permission to
   publish the image.
 - Secret `PORTAINER_API_KEY`: a Portainer API access token.
+- Secret `CF_BYPASS_HEADER`: the shared value configured by the Cloudflare
+  WAF rule that allows the deployment request through Bot Fight Mode.
 - Variable `PORTAINER_URL`: the Portainer API base URL, without a trailing
   slash.
 - Variable `PORTAINER_ENDPOINT_ID`: the numeric Docker endpoint ID.
