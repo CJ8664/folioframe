@@ -50,13 +50,14 @@ void EinkLayout::rule(int y) {
 }
 
 void EinkLayout::stepCircle(int cx, int y, int n) {
-  // 58px diameter circle, 3px black ring, number centered (26px black).
-  s_->drawCircle(cx, y, 29, INK_BLACK);
-  s_->drawCircle(cx, y, 28, INK_BLACK);
-  s_->drawCircle(cx, y, 27, INK_BLACK);
+  // Mockup: light circle with clay-colored number, thin border.
+  // 58px diameter.
+  s_->fillCircle(cx, y, 29, INK_WHITE);
+  s_->drawCircle(cx, y, 29, INK_RED);
+  s_->drawCircle(cx, y, 28, INK_RED);
   char buf[4];
   snprintf(buf, sizeof(buf), "%d", n);
-  textCenter(cx, y, buf, theme::FONT_BODY, 1, INK_BLACK);
+  textCenter(cx, y, buf, theme::FONT_BODY, 1, INK_RED);
 }
 
 void EinkLayout::networkCard(const char* apName) {
@@ -95,13 +96,24 @@ void EinkLayout::qr(const char* text, int x, int y, int targetSize,
 }
 
 void EinkLayout::frameIcon(int x, int y, int size, uint16_t color) {
-  // Picture frame: outer rect with thick border, inner rect for the "photo".
-  int t = size / 12;  // border thickness
-  if (t < 3) t = 3;
-  s_->drawRect(x, y, size, size, color);
-  s_->drawRect(x + 1, y + 1, size - 2, size - 2, color);
-  int inset = size / 4;
+  // Picture frame: outer rect with thick ornate-ish border.
+  // Mockup has a decorative frame; we approximate with double border
+  // plus corner accents.
+  int t = size / 10;
+  if (t < 4) t = 4;
+  // Outer frame
+  for (int i = 0; i < t; i++) {
+    s_->drawRect(x + i, y + i, size - 2 * i, size - 2 * i, color);
+  }
+  // Inner "photo" area
+  int inset = size / 3;
   s_->drawRect(x + inset, y + inset, size - 2 * inset, size - 2 * inset, color);
+  // Corner accents (small squares at corners for ornate feel)
+  int c = size / 8;
+  s_->fillRect(x, y, c, c, color);
+  s_->fillRect(x + size - c, y, c, c, color);
+  s_->fillRect(x, y + size - c, c, c, color);
+  s_->fillRect(x + size - c, y + size - c, c, c, color);
 }
 
 void EinkLayout::wifiIcon(int cx, int cy, int size, uint16_t color) {
@@ -126,11 +138,11 @@ void EinkLayout::wifiIcon(int cx, int cy, int size, uint16_t color) {
 void EinkLayout::qrCard(int x, int y, int w, const char* label,
                         const char* heading, const char* qrText,
                         const char* url, uint16_t qrColor) {
-  // Card: white with 2px black border, 470px tall.
+  // Card: white with subtle 1px border (mockup has soft shadow which
+  // e-paper can't do; thin border is the closest).
   const int h = 470;
   s_->fillRect(x, y, w, h, INK_WHITE);
-  s_->drawRect(x, y, w, h, INK_BLACK);
-  s_->drawRect(x + 1, y + 1, w - 2, h - 2, INK_BLACK);
+  s_->drawRoundRect(x, y, w, h, 12, INK_BLACK);
 
   int cy = y + 24;
   // Heading: 26px black bold, centered. (Mockup: heading on top)
