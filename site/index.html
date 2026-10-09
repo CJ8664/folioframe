@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FolioFrame — A connected e-paper photo frame</title>
+<meta name="description" content="FolioFrame is a connected e-paper photo frame with a 7.09-inch Spectra 6 color e-ink display, web-based photo management, and open-source firmware.">
+<style>
+  :root { --ink:#1c1917; --clay:#c2703d; --paper:#faf7f2; --muted:#78716c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif; background:var(--paper); color:var(--ink); line-height:1.6; }
+  .wrap { max-width:960px; margin:0 auto; padding:0 24px; }
+  header { padding:28px 0; display:flex; justify-content:space-between; align-items:center; }
+  .logo { font-weight:800; font-size:22px; letter-spacing:-0.5px; }
+  .logo span { color:var(--clay); }
+  nav a { margin-left:24px; color:var(--muted); text-decoration:none; font-size:15px; }
+  nav a:hover { color:var(--ink); }
+  .hero { padding:72px 0 56px; text-align:center; }
+  .hero h1 { font-size:clamp(34px,5vw,54px); letter-spacing:-1.5px; line-height:1.1; margin-bottom:18px; }
+  .hero h1 span { color:var(--clay); }
+  .hero p { font-size:19px; color:var(--muted); max-width:640px; margin:0 auto 32px; }
+  .cta { display:inline-block; background:var(--ink); color:#fff; padding:14px 32px; border-radius:12px; text-decoration:none; font-weight:600; margin:0 8px 8px; }
+  .cta.ghost { background:transparent; color:var(--ink); border:2px solid var(--ink); }
+  .frame-mock { margin:48px auto 0; max-width:520px; background:#201a15; border-radius:18px; padding:28px; box-shadow:0 24px 60px rgba(28,25,23,.18); }
+  .frame-screen { background:#f5f0e8; border-radius:8px; aspect-ratio:3/4; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:14px; text-align:center; padding:24px; }
+  section { padding:56px 0; }
+  h2 { font-size:30px; letter-spacing:-0.8px; margin-bottom:12px; text-align:center; }
+  .sub { text-align:center; color:var(--muted); max-width:620px; margin:0 auto 40px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:20px; }
+  .card { background:#fff; border:1px solid #e7e0d5; border-radius:16px; padding:28px; }
+  .card h3 { font-size:18px; margin-bottom:8px; }
+  .card p { color:var(--muted); font-size:15px; }
+  .specs { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; max-width:720px; margin:0 auto; }
+  .spec { background:#fff; border:1px solid #e7e0d5; border-radius:12px; padding:16px 20px; }
+  .spec b { display:block; font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin-bottom:4px; }
+  footer { border-top:1px solid #e7e0d5; padding:32px 0 48px; color:var(--muted); font-size:14px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+  footer a { color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Folio<span>Frame</span></div>
+    <nav><a href="#features">Features</a><a href="#specs">Specs</a><a href="https://github.com/CJ8664/folioframe">GitHub</a></nav>
+  </header>
+
+  <div class="hero">
+    <h1>Your photos, on <span>e-paper.</span></h1>
+    <p>FolioFrame is a connected photo frame built around a 7.09&Prime; Spectra&nbsp;6 color e-ink display. It sips power, looks like a printed photograph, and is managed entirely from the web.</p>
+    <a class="cta" href="https://frame.chiragjain.info">Open the web app</a>
+    <a class="cta ghost" href="https://github.com/CJ8664/folioframe">View source</a>
+    <div class="frame-mock"><div class="frame-screen">7.09&Prime; Spectra 6 e-paper<br>six inks &middot; 1200 &times; 1600<br>no backlight, no glare</div></div>
+  </div>
+
+  <section id="features">
+    <h2>Designed around your library</h2>
+    <p class="sub">No subscriptions, no walled garden. Point FolioFrame at the photos you already have.</p>
+    <div class="grid">
+      <div class="card"><h3>Web photo management</h3><p>Browse, organize, and push photos to the frame from any browser. Your library combines Google Photos and direct uploads in one place.</p></div>
+      <div class="card"><h3>Simple pairing</h3><p>Claim a frame with a pairing code in under a minute. Frames stay linked to your account across firmware updates.</p></div>
+      <div class="card"><h3>Wireless firmware updates</h3><p>New features and display improvements arrive over the air, verified before install with a battery safety gate.</p></div>
+      <div class="card"><h3>Open-source firmware</h3><p>The device firmware is open source on GitHub — auditable, hackable, and built in the open.</p></div>
+      <div class="card"><h3>E-paper, not LCD</h3><p>Spectra 6 renders photos in six inks with a paper-like finish. It holds an image with zero power and causes no eye strain.</p></div>
+      <div class="card"><h3>Self-hostable service</h3><p>The companion web service is Dockerized and self-hostable, so your photos stay under your control.</p></div>
+    </div>
+  </section>
+
+  <section id="specs">
+    <h2>Under the glass</h2>
+    <p class="sub">Honest hardware, documented in the open.</p>
+    <div class="specs">
+      <div class="spec"><b>Display</b>7.09&Prime; Good Display GDEB0709E01, Spectra 6, 1200&times;1600</div>
+      <div class="spec"><b>Driver board</b>Seeed XIAO ePaper (EE02), ESP32-S3</div>
+      <div class="spec"><b>Connectivity</b>Wi-Fi, web companion service</div>
+      <div class="spec"><b>Firmware</b>Open source, OTA updates</div>
+    </div>
+  </section>
+
+  <footer>
+    <div>FolioFrame — a project by <a href="https://chiragjain.info">Chirag Jain</a>.</div>
+    <div><a href="mailto:hello@folioframe.chiragjain.info">hello@folioframe.chiragjain.info</a></div>
+  </footer>
+</div>
+</body>
+</html>
