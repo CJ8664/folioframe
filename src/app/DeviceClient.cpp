@@ -134,3 +134,41 @@ bool DeviceClient::lastAutoUpdate(bool dflt) const {
   if (p == std::string::npos) return dflt;
   return spectra::jsonNestedBool(body, "settings", "auto_update", dflt);
 }
+
+bool DeviceClient::lastServerSettings(ServerDeviceSettings& out) const {
+  out = ServerDeviceSettings();
+  if (lastStatusBody_.isEmpty()) return false;
+  std::string body(lastStatusBody_.c_str());
+  if (body.find("\"settings\"") == std::string::npos) return false;
+  if (body.find("\"interval_minutes\"") != std::string::npos) {
+    out.hasInterval = true;
+    out.intervalMinutes =
+        (uint32_t)spectra::jsonNestedInt(body, "settings", "interval_minutes", 0);
+  }
+  if (body.find("\"quiet_enabled\"") != std::string::npos) {
+    out.hasQuietEnabled = true;
+    out.quietEnabled =
+        spectra::jsonNestedBool(body, "settings", "quiet_enabled", false);
+  }
+  if (body.find("\"quiet_start_min\"") != std::string::npos) {
+    out.hasQuietStart = true;
+    out.quietStartMin =
+        spectra::jsonNestedInt(body, "settings", "quiet_start_min", 0);
+  }
+  if (body.find("\"quiet_end_min\"") != std::string::npos) {
+    out.hasQuietEnd = true;
+    out.quietEndMin =
+        spectra::jsonNestedInt(body, "settings", "quiet_end_min", 0);
+  }
+  if (body.find("\"timezone\"") != std::string::npos) {
+    out.hasTimezone = true;
+    std::string tz = spectra::jsonNestedString(body, "settings", "timezone");
+    strncpy(out.timezone, tz.c_str(), sizeof(out.timezone) - 1);
+  }
+  if (body.find("\"orientation\"") != std::string::npos) {
+    out.hasOrientation = true;
+    out.orientation =
+        (uint8_t)spectra::jsonNestedInt(body, "settings", "orientation", 0);
+  }
+  return true;
+}

@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.15"
-#define FW_BUILD 33
+#define FW_VERSION "0.0.16"
+#define FW_BUILD 34
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -432,6 +432,52 @@ void setup() {
     config.save();
     Serial.printf("OTA: auto-install %s (from server)\n",
                   s.otaAutoInstall ? "ON" : "OFF");
+  }
+  // Website-managed device settings: the web console is the source of truth
+  // once paired. Only keys actually present in the heartbeat response
+  // override the local NVS values (offline fallback). Applies from the next
+  // wake: this wake's schedule/clock were already decided above.
+  {
+    ServerDeviceSettings ss;
+    if (deviceClient.lastServerSettings(ss)) {
+      Settings cand = config.get();
+      bool changed = false;
+      if (ss.hasInterval && cand.intervalMinutes != ss.intervalMinutes) {
+        cand.intervalMinutes = ss.intervalMinutes;
+        changed = true;
+      }
+      if (ss.hasQuietEnabled && cand.quietEnabled != ss.quietEnabled) {
+        cand.quietEnabled = ss.quietEnabled;
+        changed = true;
+      }
+      if (ss.hasQuietStart && cand.quietStartMin != ss.quietStartMin) {
+        cand.quietStartMin = ss.quietStartMin;
+        changed = true;
+      }
+      if (ss.hasQuietEnd && cand.quietEndMin != ss.quietEndMin) {
+        cand.quietEndMin = ss.quietEndMin;
+        changed = true;
+      }
+      if (ss.hasTimezone && String(cand.timezone) != String(ss.timezone)) {
+        strncpy(cand.timezone, ss.timezone, sizeof(cand.timezone) - 1);
+        cand.timezone[sizeof(cand.timezone) - 1] = '\0';
+        changed = true;
+      }
+      if (ss.hasOrientation && cand.orientation != ss.orientation) {
+        cand.orientation = ss.orientation;
+        changed = true;
+      }
+      if (changed) {
+        String err;
+        if (Config::validate(cand, err)) {
+          config.get() = cand;
+          config.save();
+          Serial.println("applied website device settings");
+        } else {
+          Serial.printf("website device settings rejected: %s\n", err.c_str());
+        }
+      }
+    }
   }
   if (g_otaCheckNow || g_otaPrompt) {
     // Button-driven: an install reboots; anything else falls through to

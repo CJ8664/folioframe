@@ -16,5 +16,6 @@ class HTTPClient {
   int getSize() { return 0; }
   WiFiClient* getStreamPtr() { return nullptr; }
   String header(const char*) { return String(""); }
+  void collectHeaders(const char**, size_t) {}
   void end() {}
 };

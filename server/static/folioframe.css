@@ -519,6 +519,54 @@ img { max-width: 100%; }
 
 .dev p .btn { margin-top: 6px; }
 
+/* ---------- 12b. Per-device settings ---------------------------------------- */
+
+.dev-settings {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.dev-settings summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 6px 0;
+}
+
+.dev-settings .setrow {
+  margin: 8px 0;
+}
+
+.dev-settings .setrow label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dev-settings select,
+.dev-settings input[type="text"],
+.dev-settings input:not([type]) {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  background: var(--input-bg, #fff);
+  color: inherit;
+}
+
+.dev-settings input[type="time"] {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  background: var(--input-bg, #fff);
+  color: inherit;
+}
+
 /* ---------- 13. Key/value rows ------------------------------------------------ */
 
 .kv {

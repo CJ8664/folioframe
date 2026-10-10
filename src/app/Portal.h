@@ -59,5 +59,7 @@ class Portal {
   bool checkCsrf();
   // Persist the server URL typed into the Wi-Fi captive portal (if any).
   void saveServerUrlFromPortal();
-  static int parseTimeToMin(const String& hhmm);
+  // GET <url>/flash/manifest.json and check it answers as a FolioFrame
+  // server. Used to verify a typed server URL before accepting it.
+  bool verifyServerUrl(const String& url);
 };

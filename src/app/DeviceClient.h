@@ -35,6 +35,25 @@ struct ClaimResult {
   String err;
 };
 
+// Website-managed device settings, piggybacked on the sendStatus heartbeat
+// response. The web console is the source of truth once paired; only keys
+// actually present in the response are marked and override the local NVS
+// values (offline fallback).
+struct ServerDeviceSettings {
+  bool hasInterval = false;
+  uint32_t intervalMinutes = 0;
+  bool hasQuietEnabled = false;
+  bool quietEnabled = false;
+  bool hasQuietStart = false;
+  int quietStartMin = 0;
+  bool hasQuietEnd = false;
+  int quietEndMin = 0;
+  bool hasTimezone = false;
+  char timezone[65] = {0};
+  bool hasOrientation = false;
+  uint8_t orientation = 0;
+};
+
 class DeviceClient {
  public:
   explicit DeviceClient(Board* board) : board_(board) {}
@@ -56,6 +75,10 @@ class DeviceClient {
   // Returns dflt when the server sent no setting (old server): the caller
   // passes the local NVS value so it is preserved.
   bool lastAutoUpdate(bool dflt) const;
+  // Website-managed settings from the last sendStatus response. Only keys
+  // actually present are marked in `out`; absent keys keep local values.
+  // Returns false when no status response is available.
+  bool lastServerSettings(ServerDeviceSettings& out) const;
 
  private:
   Board* board_;

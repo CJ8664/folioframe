@@ -1031,6 +1031,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "rssi": d.get("rssi"),
                     "override": bool(d.get("override_etag")),
                     "auto_update": d.get("auto_update", True),
+                    "settings": d.get("settings") or {},
                 })
             self._json(200, {"ok": True, "devices": devs,
                              "latest_fw": APP.fw_version(),
@@ -1383,11 +1384,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             APP.devices.heartbeat(dev["device_id"], data)
             # Piggyback per-device settings on the heartbeat response: zero
             # extra round trips for the frame. Old firmware ignores the body.
-            # Server is the source of truth; the on-device Portal checkbox is
-            # the offline fallback and gets overwritten on the next wake.
-            self._json(200, {"ok": True, "settings": {
-                "auto_update": dev.get("auto_update", True),
-            }})
+            # Server is the source of truth; the device keeps its local NVS
+            # values for anything unset (offline fallback).
+            settings = {"auto_update": dev.get("auto_update", True)}
+            settings.update(dev.get("settings") or {})
+            self._json(200, {"ok": True, "settings": settings})
             return
 
         if p == "/v1/device/unpair":
@@ -1605,8 +1606,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
-            # Rename and/or auto-update toggle. Each is independent: a bad
-            # value in one never blocks the other.
+            # Rename, auto-update toggle, and website-managed device settings.
+            # Each is independent: a bad value in one never blocks the other.
             ok = True
             if "name" in data:
                 ok = APP.devices.rename(dev_id, sub, data.get("name", "")) and ok
@@ -1619,6 +1620,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                      "error": "auto_update must be true/false"})
                     return
                 ok = APP.devices.set_auto_update(dev_id, sub, val) and ok
+            if "settings" in data:
+                ok_s, err = APP.devices.set_device_settings(
+                    dev_id, sub, data.get("settings"))
+                if not ok_s:
+                    self._json(400, {"ok": False, "error": err})
+                    return
+                ok = ok and ok_s
             if ok:
                 self._json(200, {"ok": True})
             else:
@@ -2485,6 +2493,7 @@ async function renderDevices(){
         <span>Auto-install firmware updates</span>
       </label>
       <span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About auto-update'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>When on, the frame installs new firmware silently at its next wake. When off, it only shows an "update available" notice — press KEY2 on the frame to install. The frame picks this up at its next check-in.</span></span>
+      ${devSettingsHtml(dev)}
     </div>`;
   }).join('')+`<p class='msg' id='dev-msg'></p>
     <div class='btnrow'><a class='btn btn-ghost btn-sm' href='/claim'>Pair another frame</a></div>`;
@@ -2521,6 +2530,62 @@ async function renameDev(id){
 async function setAutoUpdate(id,on){
   const r=await api('PATCH','/api/devices/'+id,{auto_update:on});
   devMsg(r.ok?(on?'Auto-update on — the frame picks this up at its next wake.':'Auto-update off — the frame will only show an update notice.'):'Could not change: '+(r.error||'unknown error'),!r.ok);
+  init();
+}
+function fmtClock(mins){
+  mins=((mins%1440)+1440)%1440;
+  return String(Math.floor(mins/60)).padStart(2,'0')+':'+String(mins%60).padStart(2,'0');
+}
+function parseClock(str){
+  const m=/^(\\d{1,2}):(\\d{2})$/.exec(str||'');
+  if(!m)return null;
+  const v=parseInt(m[1])*60+parseInt(m[2]);
+  return (v>=0&&v<1440)?v:null;
+}
+function devSettingsHtml(dev){
+  const s=dev.settings||{};
+  const iv=s.interval_minutes??60, qen=s.quiet_enabled??true;
+  const qs=fmtClock(s.quiet_start_min??1320), qe=fmtClock(s.quiet_end_min??420);
+  const tz=s.timezone??'auto', orient=s.orientation??0;
+  const intOpts=[15,30,60,120,240,480,720,1440].map(v=>
+    `<option value='${v}'${v===iv?' selected':''}>${v>=60?(v/60)+' h':v+' min'}</option>`).join('');
+  const orientOpts=[0,1,2,3].map(v=>
+    `<option value='${v}'${v===orient?' selected':''}>${v}</option>`).join('');
+  return `
+      <details class='dev-settings'>
+        <summary>Frame settings</summary>
+        <div class='setrow'><label>Refresh interval<br>
+          <select id='set-interval-${dev.device_id}'>${intOpts}</select></label></div>
+        <div class='setrow'><label class='tgl'>
+          <input type='checkbox' id='set-qen-${dev.device_id}'${qen?' checked':''}>
+          <span>Quiet hours</span></label></div>
+        <div class='setrow'><label>Quiet start<br>
+          <input type='time' id='set-qs-${dev.device_id}' value='${qs}'></label>
+          <label>Quiet end<br>
+          <input type='time' id='set-qe-${dev.device_id}' value='${qe}'></label></div>
+        <div class='setrow'><label>Timezone<br>
+          <input id='set-tz-${dev.device_id}' value='${esc(tz)}' placeholder='auto'></label>
+          <span class='hint-wrap'><button class='hint' type='button' aria-expanded='false' aria-label='About timezone'>?</button><span class='hint-pop hint-pop--below hint-pop--left' role='tooltip' hidden>“auto” uses the frame’s IP geolocation; or enter a POSIX TZ string.</span></span></div>
+        <div class='setrow'><label>Orientation (0-3)<br>
+          <select id='set-orient-${dev.device_id}'>${orientOpts}</select></label></div>
+        <div class='btnrow'><button class='btn btn-ghost btn-sm' onclick='saveDevSettings("${dev.device_id}")'>Save frame settings</button></div>
+        <p class='muted'>Applies at the frame's next wake.</p>
+      </details>`;
+}
+async function saveDevSettings(id){
+  const g=n=>document.getElementById(n+'-'+id);
+  const qs=parseClock(g('set-qs').value), qe=parseClock(g('set-qe').value);
+  if(qs==null||qe==null){devMsg('Quiet hours need HH:MM times.',true);return;}
+  const tz=g('set-tz').value.trim();
+  if(!tz){devMsg('Timezone is required (use “auto”).',true);return;}
+  const settings={
+    interval_minutes:parseInt(g('set-interval').value),
+    quiet_enabled:g('set-qen').checked,
+    quiet_start_min:qs, quiet_end_min:qe,
+    timezone:tz, orientation:parseInt(g('set-orient').value),
+  };
+  const r=await api('PATCH','/api/devices/'+id,{settings});
+  devMsg(r.ok?'Frame settings saved — applies at the next wake.':'Could not save: '+(r.error||'unknown error'),!r.ok);
   init();
 }
 async function logout(){await fetch('/api/auth/logout',{method:'POST'});location.href='/';}

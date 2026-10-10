@@ -14,7 +14,11 @@
 #define INPUT 0
 #define OUTPUT 1
 #define INPUT_PULLUP 2
+#define FALLING 3
+#define HEX 16
 #define RTC_DATA_ATTR
+#define IRAM_ATTR
+void attachInterruptArg(int, void (*)(void*), void*, int);
 
 class String {
   std::string s_;
@@ -28,6 +32,7 @@ class String {
   String(uint16_t v) : s_(std::to_string(v)) {}
   String(long v) : s_(std::to_string(v)) {}
   String(unsigned long v) : s_(std::to_string(v)) {}
+  String(unsigned long v, int) : s_(std::to_string(v)) {}  // base ignored
   const char* c_str() const { return s_.c_str(); }
   unsigned int length() const { return (unsigned int)s_.size(); }
   bool isEmpty() const { return s_.empty(); }
@@ -75,6 +80,7 @@ class String {
   bool operator==(const String& o) const { return s_ == o.s_; }
   bool operator!=(const char* o) const { return s_ != o; }
   bool operator!=(const String& o) const { return s_ != o.s_; }
+  char operator[](unsigned int i) const { return i < s_.size() ? s_[i] : '\0'; }
   friend String operator+(const String& a, const String& b) {
     return String(a.s_ + b.s_);
   }
@@ -107,6 +113,8 @@ int digitalRead(int);
 void delay(unsigned long);
 unsigned long millis();
 int analogReadMilliVolts(int);
+#define ADC_11db 3
+void analogSetPinAttenuation(int, int);
 bool psramFound();
 void* ps_malloc(size_t);
 void configTime(long, long, const char*, const char*);

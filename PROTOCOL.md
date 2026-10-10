@@ -1,15 +1,23 @@
-# SpectraFrame Device ↔ Server Protocol v2.3
+# SpectraFrame Device ↔ Server Protocol v2.4
 
 Replaces v1. The anonymous `GET /frame` is **removed** — every device endpoint
 requires authentication, and every human endpoint requires a signed-in session.
 There is no unauthenticated path to any frame, photo, or device control.
 
-v2.3 change: **per-device auto-update setting.** `PATCH /api/devices/{id}`
-accepts `{"auto_update": bool}`; `POST /v1/device/status` returns
-`{"ok": true, "settings": {"auto_update": bool}}` so the frame learns the
-console toggle at heartbeat time with zero extra round trips. Server is the
-source of truth; the on-device Portal checkbox is the offline fallback.
-(Supersedes v2.2.)
+v2.4 change: **website-managed device settings.** The web console is the
+source of truth for per-device settings once paired; the on-device portal
+keeps only Wi-Fi credentials, the server URL, and the local-dev OTA base
+override. `PATCH /api/devices/{id}` accepts `{"settings": {...}}` with
+`interval_minutes` (15/30/60/120/240/480/720/1440), `quiet_enabled` (bool),
+`quiet_start_min` / `quiet_end_min` (0..1439), `timezone` (1..64 chars),
+`orientation` (0..3); unknown keys and out-of-range values are rejected.
+`POST /v1/device/status` returns `{"ok": true, "settings": {...}}` containing
+`auto_update` plus only the settings keys actually stored — the frame applies
+them on wake, keeping its local NVS values for anything unset (offline
+fallback). Website changes take effect at the frame's next wake.
+
+v2.3 change: **per-device auto-update setting.** (Superseded by v2.4's
+settings object; `auto_update` remains a top-level `settings` key.)
 
 v2.2 change: **shared service OAuth client.** The admin configures one
 Google OAuth client (once, in `SPECTRA_CONFIG_JSON`); every user just clicks
@@ -83,7 +91,7 @@ DEVICE                                        SERVER                    CONSOLE
 | `POST` | `/v1/device/register` | unauthenticated, rate-limited; starts claim flow |
 | `POST` | `/v1/device/claim` | `{device_id, claim_code}`; `pending` or `claimed`+token |
 | `GET` | `/v1/device/frame` | packed-4bpp frame **for this device**; `If-None-Match` → `304` |
-| `POST` | `/v1/device/status` | heartbeat `{fw, fw_build, battery_pct, rssi}` → `{"ok": true, "settings": {"auto_update": bool}}` |
+| `POST` | `/v1/device/status` | heartbeat `{fw, fw_build, battery_pct, rssi}` → `{"ok": true, "settings": {...}}` (auto_update + website-managed keys) |
 | `POST` | `/v1/device/unpair` | device-initiated unpair (factory reset) |
 | `GET` | `/v1/device/ota/version` | `build=N` manifest (`md5=` line when a binary is published) |
 | `GET` | `/v1/device/ota/firmware.bin` | ESP32 app image (when published) |
@@ -150,7 +158,7 @@ wake. `503` with an empty queue is normal: keep image, sleep.
 | `GET` | `/api/account` | account: email, source, Photos state |
 | `GET` | `/api/devices` | my devices + status |
 | `POST` | `/api/devices/claim` | `{code}` → claims device to me |
-| `PATCH` | `/api/devices/{id}` | rename (`{"name"}`) and/or auto-update toggle (`{"auto_update": bool}`) |
+| `PATCH` | `/api/devices/{id}` | rename (`{"name"}`), auto-update toggle (`{"auto_update": bool}`), and/or website-managed settings (`{"settings": {...}}`) |
 | `DELETE` | `/api/devices/{id}` | unpair (revokes token) |
 | `POST` | `/api/devices/{id}/photos/upload` | multipart photo → **pinned override** (force push) |
 | `DELETE` | `/api/devices/{id}/photos/override` | clear override, resume assigned source |

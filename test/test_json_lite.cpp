@@ -3,7 +3,10 @@
 #include "framework.h"
 
 using spectra::jsonBool;
+using spectra::jsonInt;
 using spectra::jsonNestedBool;
+using spectra::jsonNestedInt;
+using spectra::jsonNestedString;
 using spectra::jsonOk;
 using spectra::jsonString;
 
@@ -74,6 +77,35 @@ TEST(jsonlite_bool) {
   EXPECT_TRUE(jsonBool("{\"a\":1}", "a", true));
   EXPECT_TRUE(jsonBool("{\"a\":\"true\"}", "a", true));
   EXPECT_TRUE(jsonBool("{\"a\":nul}", "a", true));
+}
+
+TEST(jsonlite_int) {
+  EXPECT_TRUE(jsonInt("{\"a\":60}", "a", 0) == 60);
+  EXPECT_TRUE(jsonInt("{\"a\":-5}", "a", 0) == -5);
+  EXPECT_TRUE(jsonInt("{ \"a\" : 1440 }", "a", 0) == 1440);  // whitespace
+  EXPECT_TRUE(jsonInt("{\"a\":0}", "a", 7) == 0);
+  // Missing key -> default.
+  EXPECT_TRUE(jsonInt("{}", "a", 7) == 7);
+  // Present but not an int -> default.
+  EXPECT_TRUE(jsonInt("{\"a\":\"60\"}", "a", 7) == 7);
+  EXPECT_TRUE(jsonInt("{\"a\":true}", "a", 7) == 7);
+  EXPECT_TRUE(jsonInt("{\"a\":6.5}", "a", 7) == 7);
+  EXPECT_TRUE(jsonInt("{\"a\":}", "a", 7) == 7);
+}
+
+TEST(jsonlite_nested_int_string) {
+  std::string b =
+      "{\"ok\":true,\"settings\":{\"interval_minutes\":60,\"quiet_enabled\":"
+      "true,\"timezone\":\"America/New_York\",\"orientation\":2}}";
+  EXPECT_TRUE(jsonNestedInt(b, "settings", "interval_minutes", 0) == 60);
+  EXPECT_TRUE(jsonNestedBool(b, "settings", "quiet_enabled", false));
+  EXPECT_TRUE(jsonNestedString(b, "settings", "timezone") == "America/New_York");
+  EXPECT_TRUE(jsonNestedInt(b, "settings", "orientation", 0) == 2);
+  // Missing keys -> defaults; missing object -> defaults.
+  EXPECT_TRUE(jsonNestedInt(b, "settings", "nope", 9) == 9);
+  EXPECT_TRUE(jsonNestedString(b, "settings", "nope") == "");
+  EXPECT_TRUE(jsonNestedInt("{}", "settings", "interval_minutes", 9) == 9);
+  EXPECT_TRUE(jsonNestedString("{}", "settings", "timezone") == "");
 }
 
 int main() { return runAllTests(); }

@@ -26,4 +26,18 @@ bool jsonBool(const std::string& body, const std::string& key, bool dflt);
 bool jsonNestedBool(const std::string& body, const std::string& outer,
                     const std::string& key, bool dflt);
 
+// Integer value of "key", or dflt if missing / not an integer literal.
+// Whitespace-tolerant; accepts an optional leading '-'.
+int jsonInt(const std::string& body, const std::string& key, int dflt);
+
+// Integer value of "key" nested inside the top-level object "outer"
+// (e.g. settings.interval_minutes), or dflt if the object/key is missing.
+int jsonNestedInt(const std::string& body, const std::string& outer,
+                  const std::string& key, int dflt);
+
+// Decoded string value of "key" nested inside the top-level object "outer",
+// or "" if missing / not a string.
+std::string jsonNestedString(const std::string& body, const std::string& outer,
+                             const std::string& key);
+
 }  // namespace spectra

@@ -84,4 +84,42 @@ bool jsonNestedBool(const std::string& body, const std::string& outer,
   return jsonBool(body.substr(p, end - p), key, dflt);
 }
 
+int jsonInt(const std::string& body, const std::string& key, int dflt) {
+  size_t p = valuePos(body, key);
+  if (p == std::string::npos) return dflt;
+  size_t i = p;
+  bool neg = false;
+  if (i < body.size() && body[i] == '-') {
+    neg = true;
+    i++;
+  }
+  if (i >= body.size() || body[i] < '0' || body[i] > '9') return dflt;
+  long v = 0;
+  while (i < body.size() && body[i] >= '0' && body[i] <= '9') {
+    v = v * 10 + (body[i] - '0');
+    if (v > 2000000000L) return dflt;  // absurd; treat as absent
+    i++;
+  }
+  if (!isValueEnd(body, i)) return dflt;
+  return neg ? -(int)v : (int)v;
+}
+
+int jsonNestedInt(const std::string& body, const std::string& outer,
+                  const std::string& key, int dflt) {
+  size_t p = valuePos(body, outer);
+  if (p == std::string::npos || body[p] != '{') return dflt;
+  size_t end = body.find('}', p);
+  if (end == std::string::npos) return dflt;
+  return jsonInt(body.substr(p, end - p), key, dflt);
+}
+
+std::string jsonNestedString(const std::string& body, const std::string& outer,
+                             const std::string& key) {
+  size_t p = valuePos(body, outer);
+  if (p == std::string::npos || body[p] != '{') return "";
+  size_t end = body.find('}', p);
+  if (end == std::string::npos) return "";
+  return jsonString(body.substr(p, end - p), key);
+}
+
 }  // namespace spectra

@@ -293,6 +293,57 @@ class TestDeviceRegistry(unittest.TestCase):
         dev = self.reg._get("ff-aabbccddeeff")
         self.assertNotIn("auto_update", dev)
 
+    def test_set_device_settings(self):
+        self._pair()
+        ok, err = self.reg.set_device_settings(
+            "ff-aabbccddeeff", "user-1", {
+                "interval_minutes": 120,
+                "quiet_enabled": True,
+                "quiet_start_min": 1380,
+                "quiet_end_min": 420,
+                "timezone": "America/New_York",
+                "orientation": 2,
+            })
+        self.assertTrue(ok, err)
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertEqual(dev["settings"]["interval_minutes"], 120)
+        self.assertEqual(dev["settings"]["timezone"], "America/New_York")
+        # partial update merges, doesn't wipe other keys
+        ok, err = self.reg.set_device_settings(
+            "ff-aabbccddeeff", "user-1", {"interval_minutes": 30})
+        self.assertTrue(ok, err)
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertEqual(dev["settings"]["interval_minutes"], 30)
+        self.assertEqual(dev["settings"]["timezone"], "America/New_York")
+
+    def test_set_device_settings_validation(self):
+        self._pair()
+        bad = [
+            ({"interval_minutes": 45}, "interval_minutes"),
+            ({"interval_minutes": "hourly"}, "interval_minutes"),
+            ({"quiet_enabled": "yes"}, "quiet_enabled"),
+            ({"quiet_start_min": 1440}, "quiet_start_min"),
+            ({"quiet_end_min": -1}, "quiet_end_min"),
+            ({"timezone": ""}, "timezone"),
+            ({"timezone": "x" * 65}, "timezone"),
+            ({"orientation": 4}, "orientation"),
+            ({"bogus_key": 1}, "bogus_key"),
+        ]
+        for payload, _key in bad:
+            ok, err = self.reg.set_device_settings(
+                "ff-aabbccddeeff", "user-1", payload)
+            self.assertFalse(ok, f"expected rejection for {payload}: {err}")
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertNotIn("settings", dev)
+
+    def test_set_device_settings_rejects_non_owner(self):
+        self._pair()
+        ok, _err = self.reg.set_device_settings(
+            "ff-aabbccddeeff", "user-2", {"interval_minutes": 30})
+        self.assertFalse(ok)
+        dev = self.reg._get("ff-aabbccddeeff")
+        self.assertNotIn("settings", dev)
+
     def test_set_auto_update_rejects_unknown_device(self):
         self.assertFalse(self.reg.set_auto_update(
             "ff-000000000000", "user-1", False))

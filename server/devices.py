@@ -313,3 +313,62 @@ class DeviceRegistry:
         dev["auto_update"] = bool(enabled)
         self._put(dev)
         return True
+
+    # ---- website-managed device settings --------------------------------
+    # The web console is the source of truth for these once the frame is
+    # paired. Only keys actually stored are sent in the heartbeat response;
+    # the firmware keeps its local NVS values for anything unset (offline
+    # fallback). Mirrors the firmware's Settings validation ranges.
+    SETTINGS_INTERVALS = (15, 30, 60, 120, 240, 480, 720, 1440)
+
+    def set_device_settings(self, device_id, user_sub, settings):
+        """Validate and store per-device settings from the web console.
+        Returns (True, "") or (False, error). Unknown keys are rejected;
+        a bad value in one never blocks the others from a previous call."""
+        dev = self._get(device_id)
+        if not dev or dev.get("owner") != user_sub:
+            return False, "device not found"
+        if not isinstance(settings, dict):
+            return False, "settings must be an object"
+        valid = {}
+        for key, val in settings.items():
+            if key == "interval_minutes":
+                try:
+                    iv = int(val)
+                except (TypeError, ValueError):
+                    return False, "interval_minutes must be a number"
+                if iv not in self.SETTINGS_INTERVALS:
+                    return False, ("interval_minutes must be one of " +
+                                   "/".join(str(x) for x in self.SETTINGS_INTERVALS))
+                valid[key] = iv
+            elif key == "quiet_enabled":
+                if not isinstance(val, bool):
+                    return False, "quiet_enabled must be true/false"
+                valid[key] = val
+            elif key in ("quiet_start_min", "quiet_end_min"):
+                try:
+                    mv = int(val)
+                except (TypeError, ValueError):
+                    return False, f"{key} must be a number"
+                if not 0 <= mv <= 1439:
+                    return False, f"{key} must be 0..1439"
+                valid[key] = mv
+            elif key == "timezone":
+                if not isinstance(val, str) or not 1 <= len(val) <= 64:
+                    return False, "timezone must be 1..64 chars"
+                valid[key] = val
+            elif key == "orientation":
+                try:
+                    ov = int(val)
+                except (TypeError, ValueError):
+                    return False, "orientation must be a number"
+                if ov not in (0, 1, 2, 3):
+                    return False, "orientation must be 0..3"
+                valid[key] = ov
+            else:
+                return False, f"unknown setting: {key}"
+        cur = dev.get("settings") or {}
+        cur.update(valid)
+        dev["settings"] = cur
+        self._put(dev)
+        return True, ""
