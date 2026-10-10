@@ -22,6 +22,5 @@ class Gdeb0709e01Panel : public Panel {
   void sleep() override;
 
  private:
-  static uint16_t nibbleToRgb565(uint8_t nibble);
   void drawQRCode(const char* text, int x, int y, int size);
 };

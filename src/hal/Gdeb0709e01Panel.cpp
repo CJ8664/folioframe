@@ -16,26 +16,20 @@
 // Setup 518 (7.09" GDEB0709E01) is activated via src/User_Setup.h.
 static EPaper epaper;
 
-// Convert in bands to bound working memory: 64 rows * 1200 px * 2 B.
-static const int kBandRows = 64;
+bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
+  PanelDims d = dims();
+  const size_t expect = (size_t)d.width * d.height / 2;
+  if (!buf || len != expect) return false;
 
-uint16_t Gdeb0709e01Panel::nibbleToRgb565(uint8_t nibble) {
-  switch (nibble) {
-    case 0x0:
-      return 0xFFFF;  // white
-    case 0x2:
-      return 0x07E0;  // green
-    case 0x6:
-      return 0xF800;  // red
-    case 0xB:
-      return 0xFFE0;  // yellow
-    case 0xD:
-      return 0x001F;  // blue
-    case 0xF:
-      return 0x0000;  // black
-    default:
-      return 0x0000;  // invalid index -> black, never garbage
-  }
+  // The EPaper sprite is 4bpp (EPD_COLOR_DEPTH); TFT_eSprite::pushImage into
+  // a 4bpp sprite expects packed 4bpp source data, NOT RGB565. The server
+  // already sends high-nibble-first packed nibbles, so push them directly.
+  // (The old code converted nibbles -> RGB565 first, but pushImage then
+  // reinterpreted those RGB565 bytes as nibbles — e.g. white 0xFFFF became
+  // nibbles 0xF,0xF = black — garbling the image.)
+  epaper.pushImage(0, 0, d.width, d.height, (const uint16_t*)buf);
+  epaper.update();
+  return true;
 }
 
 bool Gdeb0709e01Panel::begin() {
@@ -66,34 +60,6 @@ bool Gdeb0709e01Panel::begin() {
     delay(10);
   }
   Serial.println("panel begin ok, BUSY idle");
-  return true;
-}
-
-bool Gdeb0709e01Panel::drawPacked4bpp(const uint8_t* buf, size_t len) {
-  PanelDims d = dims();
-  const size_t expect = (size_t)d.width * d.height / 2;
-  if (!buf || len != expect) return false;
-
-  uint16_t* band =
-      (uint16_t*)ps_malloc((size_t)d.width * kBandRows * sizeof(uint16_t));
-  if (!band) return false;
-
-  for (uint16_t y0 = 0; y0 < d.height; y0 += kBandRows) {
-    int rows = kBandRows;
-    if (y0 + rows > d.height) rows = d.height - y0;
-    for (int r = 0; r < rows; r++) {
-      const uint8_t* srcRow = buf + ((size_t)(y0 + r) * d.width) / 2;
-      uint16_t* dstRow = band + (size_t)r * d.width;
-      for (uint16_t x = 0; x < d.width; x += 2) {
-        uint8_t packed = srcRow[x / 2];
-        dstRow[x] = nibbleToRgb565(packed >> 4);
-        dstRow[x + 1] = nibbleToRgb565(packed & 0x0F);
-      }
-    }
-    epaper.pushImage(0, y0, d.width, rows, band);
-  }
-  free(band);
-  epaper.update();
   return true;
 }
 
