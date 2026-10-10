@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.20"
-#define FW_BUILD 38
+#define FW_VERSION "0.0.21"
+#define FW_BUILD 39
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -432,8 +432,9 @@ void setup() {
   // didn't sync: 1970 timestamps must never trigger a sleep-through.
   // Never sleep through setup: an unpaired frame (no device token) always
   // continues to the pairing screen — the user is standing right there.
+  // Development: on USB power quiet hours are skipped entirely.
   String token = config.deviceToken();
-  if (clockOk && token.length() &&
+  if (clockOk && token.length() && !g_onUsb &&
       power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
     Serial.println("in quiet window, sleeping through");
     panel.sleep();
@@ -581,9 +582,24 @@ void setup() {
   }
 
   panel.sleep();
+  if (g_onUsb) {
+    // Development mode: on USB power never deep-sleep. The serial monitor
+    // stays alive and any button press restarts the cycle — no wake/sleep
+    // dance while iterating. Unplug to resume normal battery behavior.
+    Serial.println("USB dev mode: staying awake, press any key to re-run");
+    while (true) {
+      if (board.pollButton() != ButtonId::None) {
+        Serial.println("dev mode: button pressed, restarting cycle");
+        delay(500);  // debounce
+        ESP.restart();
+      }
+      delay(50);
+    }
+  }
   power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(), clockOk);
 }
 
 void loop() {
-  // Unreachable: setup() always ends in deep sleep.
+  // Unreachable in normal use: setup() always ends in deep sleep (or the
+  // USB dev-mode poll loop above).
 }
