@@ -42,6 +42,22 @@ String escapeHtml(const String& in) {
 bool Portal::ensureWiFi() {
   wm_.setConnectTimeout(30);
   wm_.setConfigPortalTimeout(300);
+  // Diagnostic: log the 802.11 disconnect reason code on every STA
+  // disconnect (e.g. 201=NO_AP_FOUND, 202=AUTH_FAIL, 15=handshake timeout).
+  // WiFiManager also logs this at verbose debug level; this is unconditional.
+  static bool diagHooked = false;
+  if (!diagHooked) {
+    WiFi.onEvent(
+        [](WiFiEvent_t event, WiFiEventInfo_t info) {
+          if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+            Serial.printf("wifi diag: disconnected reason=%d from %s\n",
+                          info.wifi_sta_disconnected.reason,
+                          info.wifi_sta_disconnected.ssid);
+          }
+        },
+        ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    diagHooked = true;
+  }
   // Ask for the server URL on the same captive-portal screen as the Wi-Fi
   // credentials: one setup step instead of two. Pre-fill the saved value so
   // re-running the portal never wipes it.
