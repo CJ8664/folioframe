@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.17"
-#define FW_BUILD 35
+#define FW_VERSION "0.0.18"
+#define FW_BUILD 36
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -309,7 +309,11 @@ void setup() {
       default:
         break;
     }
-    if (wakeButton() == ButtonId::Btn1) {
+    // KEY1 opens the settings portal — but only once paired. On an unpaired
+    // frame the portal would park on the settings screen (then sleep) instead
+    // of making progress toward pairing, so unpaired KEY1 presses just run
+    // the normal setup flow below, which ends at the pairing screen.
+    if (wakeButton() == ButtonId::Btn1 && config.deviceToken().length()) {
       if (!portal.hasWiFiCreds()) {
         status.showPortal(("FF-Setup-" + board.deviceId()).c_str(),
                           "http://192.168.4.1");
