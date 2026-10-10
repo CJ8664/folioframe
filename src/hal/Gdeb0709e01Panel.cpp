@@ -53,16 +53,19 @@ bool Gdeb0709e01Panel::begin() {
   Serial.printf("panel pre-begin, BUSY=%d\n", digitalRead(4));
   epaper.begin();
   // Old library begin() is void; check BUSY to see if panel is alive.
-  // After init the panel should be idle (BUSY low). If BUSY is stuck high,
-  // the panel isn't responding (disconnected FPC?) — report failure so
-  // main.cpp can show the error screen instead of failing silently.
-  delay(100);
-  int busy = digitalRead(4);
-  Serial.printf("panel begin ok, BUSY=%d\n", busy);
-  if (busy) {
-    Serial.println("panel begin FAILED: BUSY stuck high");
-    return false;
+  // GDEB0709E01 BUSY idles HIGH and pulls LOW while busy (see
+  // TECHNICAL_REPORT_GDEB0709E01.md; the vendored lib's CHECK_BUSY waits
+  // while LOW). Wait bounded for idle; only fail if it never gets there.
+  // A single-sample HIGH check here was a false positive on healthy panels.
+  uint32_t busyT0 = millis();
+  while (digitalRead(4) == LOW) {
+    if (millis() - busyT0 > 2000) {
+      Serial.println("panel begin FAILED: BUSY never idle");
+      return false;
+    }
+    delay(10);
   }
+  Serial.println("panel begin ok, BUSY idle");
   return true;
 }
 
