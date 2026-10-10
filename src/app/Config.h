@@ -19,6 +19,7 @@ struct Settings {
   char deviceName[25];
   uint8_t orientation;  // 0..3
   char etag[64];        // cached frame ETag for If-None-Match
+  uint32_t fwBuild;     // firmware build last run; ETag cleared on change
   char otaBase[129];  // manual OTA base override; empty = use serverUrl
   bool otaAutoInstall;      // true = check+install silently on wake (default)
   bool otaUpdatePending;    // manual mode: update found, not yet installed

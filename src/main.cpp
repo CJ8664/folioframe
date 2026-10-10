@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.19"
-#define FW_BUILD 37
+#define FW_VERSION "0.0.20"
+#define FW_BUILD 38
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -262,6 +262,19 @@ void setup() {
   if (!fetcher.begin()) panic("No frame buffer", "PSRAM allocation failed");
   config.load();
 
+  // A firmware update invalidates the photo ETag: the panel may be showing
+  // a stale non-photo screen (setup/settings), so force one repaint instead
+  // of 304-keeping it.
+  {
+    Settings& sc = config.get();
+    if (sc.fwBuild != FW_BUILD) {
+      sc.fwBuild = FW_BUILD;
+      sc.etag[0] = '\0';
+      config.save();
+      Serial.println("fw build changed, cleared photo ETag");
+    }
+  }
+
   WakeCause cause = board.wakeCause();
   Serial.printf("wake cause: %d\n", (int)cause);
 
@@ -356,13 +369,23 @@ void setup() {
   // WiFiManager saved-state check alone has proven unreliable.
   bool hasCreds = portal.hasWiFiCreds();
   bool hasServer = strlen(config.get().serverUrl) > 0;
-  Serial.printf("netcheck: hasWiFiCreds=%d hasServerUrl=%d\n",
-                (int)hasCreds, (int)hasServer);
-  if (!hasCreds || !hasServer) {
+  bool paired = config.deviceToken().length() > 0;
+  Serial.printf("netcheck: hasWiFiCreds=%d hasServerUrl=%d paired=%d\n",
+                (int)hasCreds, (int)hasServer, (int)paired);
+  // The WiFiManager saved-state check is unreliable (it reports no creds
+  // while the ESP32 NVS creds connect fine). A paired frame never needs the
+  // setup screen: if WiFi is truly down, ensureWiFi shows the portal. And a
+  // setup screen drawn on a paired frame would leave a stale non-photo
+  // image that a later 304 would never repaint.
+  if ((!hasCreds || !hasServer) && !paired) {
     Serial.println("netcheck: drawing setup screen");
     status.showPortal(("FF-Setup-" + board.deviceId()).c_str(),
                       "http://192.168.4.1");
     Serial.println("netcheck: setup screen done");
+    // The panel no longer shows the photo the ETag refers to.
+    Settings& sc = config.get();
+    sc.etag[0] = '\0';
+    config.save();
   } else {
     Serial.println("netcheck: skipping setup screen");
   }

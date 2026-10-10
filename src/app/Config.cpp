@@ -26,6 +26,7 @@ void Config::setDefaults() {
   settings_.otaUpdatePending = false;
   settings_.otaPendingBuild = 0;
   settings_.otaPendingVersion[0] = '\0';
+  settings_.fwBuild = 0;
 }
 
 void Config::resetDefaults() {
@@ -49,6 +50,7 @@ void Config::load() {
   p.getString("name", settings_.deviceName, sizeof(settings_.deviceName));
   settings_.orientation = p.getUChar("orient", settings_.orientation);
   p.getString("etag", settings_.etag, sizeof(settings_.etag));
+  settings_.fwBuild = p.getUInt("fwbld", settings_.fwBuild);
   p.getString("otabase", settings_.otaBase, sizeof(settings_.otaBase));
   settings_.otaAutoInstall = p.getBool("otaauto", settings_.otaAutoInstall);
   settings_.otaUpdatePending =
@@ -83,6 +85,7 @@ void Config::save() {
   p.putString("name", settings_.deviceName);
   p.putUChar("orient", settings_.orientation);
   p.putString("etag", settings_.etag);
+  p.putUInt("fwbld", settings_.fwBuild);
   p.putString("otabase", settings_.otaBase);
   p.putBool("otaauto", settings_.otaAutoInstall);
   p.putBool("otapend", settings_.otaUpdatePending);
