@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.18"
-#define FW_BUILD 36
+#define FW_VERSION "0.0.19"
+#define FW_BUILD 37
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -284,14 +284,16 @@ void setup() {
   }
 
   // --- Button wakes ---
+  // KEY1: wake only — the normal cycle below runs (refresh now).
+  // KEY2: short press = settings portal; long hold (2.5 s) = check for a
+  // firmware update now; short press with a staged manual update = install
+  // prompt. KEY3: toggle pinned photo.
   if (cause == WakeCause::Button) {
+    bool key2Settings = false;
     switch (wakeButton()) {
       case ButtonId::Btn1:
-        break;  // handled below: enter portal
+        break;  // wake only
       case ButtonId::Btn2: {
-        // Long hold = check for a firmware update now. Short press while a
-        // manual update is staged = update prompt. Plain short press =
-        // fetch-now (existing behavior).
         bool longPress = board.buttonHeld(ButtonId::Btn2) &&
                          btn2DownAt != 0 && (millis() - btn2DownAt >= 2500);
         if (longPress) {
@@ -299,6 +301,8 @@ void setup() {
         } else if (!config.get().otaAutoInstall &&
                    config.get().otaUpdatePending) {
           g_otaPrompt = true;
+        } else {
+          key2Settings = true;
         }
         break;
       }
@@ -309,11 +313,12 @@ void setup() {
       default:
         break;
     }
-    // KEY1 opens the settings portal — but only once paired. On an unpaired
-    // frame the portal would park on the settings screen (then sleep) instead
-    // of making progress toward pairing, so unpaired KEY1 presses just run
-    // the normal setup flow below, which ends at the pairing screen.
-    if (wakeButton() == ButtonId::Btn1 && config.deviceToken().length()) {
+    // KEY2 (short press) opens the settings portal — but only once paired.
+    // On an unpaired frame the portal would park on the settings screen
+    // (then sleep) instead of making progress toward pairing, so unpaired
+    // KEY2 presses just run the normal setup flow below, which ends at the
+    // pairing screen.
+    if (key2Settings && config.deviceToken().length()) {
       if (!portal.hasWiFiCreds()) {
         status.showPortal(("FF-Setup-" + board.deviceId()).c_str(),
                           "http://192.168.4.1");
