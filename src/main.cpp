@@ -25,11 +25,11 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.22"
-#define FW_BUILD 40
+#define FW_VERSION "0.0.23"
+#define FW_BUILD 41
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
-RTC_DATA_ATTR bool g_pinned = false;
+RTC_DATA_ATTR bool g_nextImage = false;
 RTC_DATA_ATTR uint32_t g_bootCount = 0;
 
 static EE02Board board;
@@ -300,7 +300,7 @@ void setup() {
   // KEY1: wake only — the normal cycle below runs (refresh now).
   // KEY2: short press = settings portal; long hold (2.5 s) = check for a
   // firmware update now; short press with a staged manual update = install
-  // prompt. KEY3: toggle pinned photo.
+  // prompt. KEY3: next image (server rotates to the next photo).
   if (cause == WakeCause::Button) {
     bool key2Settings = false;
     switch (wakeButton()) {
@@ -320,8 +320,8 @@ void setup() {
         break;
       }
       case ButtonId::Btn3:
-        g_pinned = !g_pinned;
-        Serial.printf("pinned=%d\n", g_pinned);
+        g_nextImage = true;  // force server rotation to the next photo
+        Serial.println("next image requested");
         break;
       default:
         break;
@@ -354,12 +354,6 @@ void setup() {
       }
       // else fall through with the new settings
     }
-  }
-
-  // Pinned: skip everything, fast re-arm (sven97 quickSleep lesson).
-  if (g_pinned && cause == WakeCause::Timer) {
-    power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(),
-                         false /* clock not synced yet */);
   }
 
   // --- Network ---
@@ -542,6 +536,16 @@ void setup() {
   }
 
   // --- Fetch + paint ---
+  // KEY3: ask the server to rotate to the next photo first. The rotation
+  // changes the frame ETag, so the fetch below naturally gets a 200.
+  if (g_nextImage) {
+    g_nextImage = false;
+    Serial.println("requesting next image from server");
+    if (!deviceClient.nextImage(token.c_str())) {
+      Serial.printf("next image failed: %s\n",
+                    deviceClient.lastError().c_str());
+    }
+  }
   board.blinkLed(2);  // proof-of-life during the long fetch
   switch (fetcher.fetchFrame(s.serverUrl, token.c_str(), FW_VERSION,
                              s.etag)) {

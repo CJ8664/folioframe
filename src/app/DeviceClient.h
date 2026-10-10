@@ -68,6 +68,8 @@ class DeviceClient {
   // failures never block the wake cycle. Powers the console's firmware
   // version display and update-available badge.
   bool sendStatus(const char* token, uint32_t fwBuild);
+  // Ask the server to rotate to the next photo now (KEY3). True on 200.
+  bool nextImage(const char* token);
 
   String lastError() const { return lastError_; }
   String fwVersion() const { return fwVersion_; }

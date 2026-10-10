@@ -125,6 +125,15 @@ bool DeviceClient::sendStatus(const char* token, uint32_t fwBuild) {
   return code == 200;
 }
 
+bool DeviceClient::nextImage(const char* token) {
+  String body;
+  int code = postJson("/v1/device/next", "{}", token, body);
+  if (code != 200) {
+    lastError_ = "next failed: HTTP " + String(code);
+  }
+  return code == 200;
+}
+
 bool DeviceClient::lastAutoUpdate(bool dflt) const {
   if (lastStatusBody_.isEmpty()) return dflt;
   std::string body(lastStatusBody_.c_str());

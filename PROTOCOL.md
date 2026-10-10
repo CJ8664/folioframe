@@ -91,6 +91,7 @@ DEVICE                                        SERVER                    CONSOLE
 | `POST` | `/v1/device/register` | unauthenticated, rate-limited; starts claim flow |
 | `POST` | `/v1/device/claim` | `{device_id, claim_code}`; `pending` or `claimed`+token |
 | `GET` | `/v1/device/frame` | packed-4bpp frame **for this device**; `If-None-Match` → `304` |
+| `POST` | `/v1/device/next` | rotate to the next photo now (KEY3); `{"ok": true}` |
 | `POST` | `/v1/device/status` | heartbeat `{fw, fw_build, battery_pct, rssi}` → `{"ok": true, "settings": {...}}` (auto_update + website-managed keys) |
 | `POST` | `/v1/device/unpair` | device-initiated unpair (factory reset) |
 | `GET` | `/v1/device/ota/version` | `build=N` manifest (`md5=` line when a binary is published) |

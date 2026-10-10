@@ -1132,6 +1132,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "ETag": etag, "X-Frame-Format": "packed4bpp"})
             return
 
+        if p == "/v1/device/next":
+            dev = self._require_device()
+            if not dev:
+                return
+            try:
+                APP._rotate_device(dev)
+            except Exception as e:
+                logger.error(f"device next rotate error: {e}")
+                self._json(500, {"ok": False, "error": "rotate failed"})
+                return
+            self._json(200, {"ok": True})
+            return
+
         if p == "/v1/device/ota/version":
             if not self._require_device():
                 return
