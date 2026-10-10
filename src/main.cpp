@@ -25,8 +25,8 @@
 #include "ui/StatusBadge.h"
 #include "ui/StatusScreen.h"
 
-#define FW_VERSION "0.0.16"
-#define FW_BUILD 34
+#define FW_VERSION "0.0.17"
+#define FW_BUILD 35
 
 // RTC-persisted across deep sleep (cleared on power loss / reset button).
 RTC_DATA_ATTR bool g_pinned = false;
@@ -398,14 +398,17 @@ void setup() {
 
   // Quiet hours: sleep through, don't fetch. Fail open when the clock
   // didn't sync: 1970 timestamps must never trigger a sleep-through.
-  if (clockOk && power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
+  // Never sleep through setup: an unpaired frame (no device token) always
+  // continues to the pairing screen — the user is standing right there.
+  String token = config.deviceToken();
+  if (clockOk && token.length() &&
+      power.inQuietNow(config.get(), timeSync.utcOffsetMinutes())) {
     Serial.println("in quiet window, sleeping through");
     panel.sleep();
     power.sleepUntilNext(config.get(), timeSync.utcOffsetMinutes(), clockOk);
   }
 
   // --- Pairing (first boot, after unpair, or after a revoked token) ---
-  String token = config.deviceToken();
   if (!token.length()) {
     token = pairWithServer(s.serverUrl);
     if (!token.length()) {
